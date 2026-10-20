@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MXene/metal interface builder</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="top">
+  <div class="title">
+    <h1>MXene/metal interface builder</h1>
+    <p>Stack the MXene from the bottom up, place the metal on it, relax with MACE-MH-1.</p>
+  </div>
+  <div class="readout">
+    <p class="formula" id="formula">&nbsp;</p>
+    <p class="sequence" id="sequence">&nbsp;</p>
+    <p class="chips" id="chips"></p>
+  </div>
+</header>
+
+<main class="layout">
+  <form class="inputs" id="form" autocomplete="off" onsubmit="return false">
+
+    <section>
+      <h2><span class="step">1</span>MXene</h2>
+      <div class="grid2">
+        <label>Preset
+          <select id="preset">
+            <option value="">Custom</option>
+            {% for name in options.presets %}<option>{{ name }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Layers
+          <select id="n">
+            <option value="1">M₂X</option><option value="2">M₃X₂</option>
+            <option value="3">M₄X₃</option><option value="4">M₅X₄</option>
+          </select>
+        </label>
+      </div>
+      <fieldset class="seg">
+        <legend>Stacking</legend>
+        <label><input type="radio" name="stacking" value="ABC" checked><span>A<i>β</i>C</span><small>octahedral</small></label>
+        <label><input type="radio" name="stacking" value="ABA"><span>A<i>β</i>A</span><small>trigonal prismatic</small></label>
+      </fieldset>
+      <div class="checks">
+        <label><input type="checkbox" id="o_bottom" checked> O on the bottom</label>
+        <label><input type="checkbox" id="o_top" checked> O on top</label>
+      </div>
+      <table class="stack">
+        <thead><tr><th>#</th><th>Element</th><th>Site</th><th>Δz (Å)</th></tr></thead>
+        <tbody id="stack"></tbody>
+      </table>
+      <p class="hint">Top row is the top layer. Changing the lowest metal changes the metal layers that matched it. Blank fields follow the rules.</p>
+      <label>Lattice a (Å) <input id="mxene_a" type="number" step="0.001" min="2" max="4.5"></label>
+    </section>
+
+    <section>
+      <h2><span class="step">2</span>Metal on top</h2>
+      <div class="grid3">
+        <label>Metal (fcc)
+          <select id="metal">{% for m in options.fcc %}<option>{{ m }}</option>{% endfor %}</select>
+        </label>
+        <label>Layers <input id="metal_layers" type="number" min="0" max="20" step="1"></label>
+        <label>Gap (Å) <input id="gap" type="number" step="0.01" min="0.8" max="8"></label>
+      </div>
+      <div class="grid3">
+        <label>First layer site
+          <select id="metal_site"><option value="">auto</option><option>A</option><option>B</option><option>C</option></select>
+        </label>
+        <label>Bulk a (Å) <input id="metal_a" type="number" step="0.001" min="3" max="5"></label>
+        <label>Layer spacing (Å) <input id="metal_dz" type="number" step="0.001" min="1" max="4"></label>
+      </div>
+      <div class="grid3">
+        <label>Shift along a₁ <input id="rbt0" type="number" step="0.01" min="0" max="1"></label>
+        <label>Shift along a₂ <input id="rbt1" type="number" step="0.01" min="0" max="1"></label>
+        <span></span>
+      </div>
+      <p class="hint">The shift is a rigid-body translation of the metal, in fractions of the MXene cell. A site letter is a shift of ⅓ or ⅔.</p>
+      <div class="inline">
+        <label>Scan grid <input id="scan_grid" type="number" min="2" max="12" step="1" value="6"></label>
+        <label class="check"><input type="checkbox" id="scan_relax_z"> relax z only</label>
+        <button type="button" class="secondary" id="scanBtn">Scan the shift</button>
+      </div>
+    </section>
+
+    <section>
+      <h2><span class="step">3</span>Cell and matching</h2>
+      <fieldset class="seg three">
+        <legend>Geometry</legend>
+        <label><input type="radio" name="geometry" value="slab" checked><span>Slab</span><small>metal on top</small></label>
+        <label><input type="radio" name="geometry" value="sandwich"><span>Sandwich</span><small>metal on both faces</small></label>
+        <label><input type="radio" name="geometry" value="periodic"><span>Periodic</span><small>no vacuum</small></label>
+      </fieldset>
+      <div class="grid4">
+        <label>MXene i <input id="sc_i" type="number" step="1" min="0"></label>
+        <label>MXene j <input id="sc_j" type="number" step="1" min="0"></label>
+        <label>Metal k <input id="sc_k" type="number" step="1" min="0"></label>
+        <label>Metal l <input id="sc_l" type="number" step="1" min="0"></label>
+      </div>
+      <p class="hint">Supercell vector i·a₁ + j·a₂ of the MXene, matched to k·b₁ + l·b₂ of the metal. 1, 0 and 1, 0 is the coherent 1×1 cell.</p>
+      <details class="finder">
+        <summary>Find coincidence cells</summary>
+        <div class="grid4">
+          <label>Max strain (%) <input id="m_strain" type="number" value="3" step="0.1" min="0.1"></label>
+          <label>Max atoms <input id="m_atoms" type="number" value="400" step="10" min="10"></label>
+          <label>Twist (°) <input id="m_twist" type="number" step="0.1" placeholder="any"></label>
+          <label>± (°) <input id="m_tol" type="number" value="1" step="0.1" min="0"></label>
+        </div>
+        <div class="inline">
+          <button type="button" class="secondary" id="findBtn">Find cells</button>
+          <button type="button" class="link" id="coherentBtn">Back to coherent 1×1</button>
+        </div>
+        <table class="cands" id="cands" hidden>
+          <thead><tr><th>MXene</th><th>Metal</th><th>Strain %</th><th>Twist °</th><th>Atoms</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </details>
+      <div class="grid3">
+        <label>Repeat a₁ <input id="rep1" type="number" min="1" max="10" step="1"></label>
+        <label>Repeat a₂ <input id="rep2" type="number" min="1" max="10" step="1"></label>
+        <label>Vacuum (Å) <input id="vacuum" type="number" min="0" max="60" step="0.5"></label>
+      </div>
+    </section>
+
+    <section>
+      <h2><span class="step">4</span>Relaxation</h2>
+      <div class="grid2">
+        <label>MACE-MH-1 head
+          <select id="head">{% for h in options.heads %}<option>{{ h }}</option>{% endfor %}</select>
+        </label>
+        <label>Optimizer <select id="optimizer"><option>FIRE</option><option>BFGS</option></select></label>
+      </div>
+      <div class="grid2">
+        <label>fmax (eV/Å) <input id="fmax" type="number" step="0.005" min="0.001" max="1"></label>
+        <label>Max steps <input id="max_steps" type="number" step="10" min="1" max="10000"></label>
+      </div>
+      <div class="checks column">
+        <label><input type="checkbox" id="dispersion"> Add D3(BJ) dispersion</label>
+        <label><input type="checkbox" id="relax_cell"> Relax a, b and γ (c fixed)</label>
+        <label><input type="checkbox" id="mlip_lattice"> Take auto lattice constants from the MLIP</label>
+        <label><input type="checkbox" id="work_of_adhesion"> Compute the work of adhesion</label>
+      </div>
+      <p class="hint">Fixed layers are ticked in the layer table. By default the outer two metal layers are fixed.</p>
+      <div class="inline">
+        <button type="button" class="primary" id="runBtn">Relax</button>
+        <button type="button" class="secondary" id="stopBtn" disabled>Stop</button>
+      </div>
+    </section>
+
+    <section class="io">
+      <div class="inline">
+        <button type="button" class="link" id="saveInputs">Save inputs.json</button>
+        <label class="link file">Load inputs.json<input type="file" id="loadInputs" accept=".json,application/json"></label>
+      </div>
+    </section>
+  </form>
+
+  <div class="results">
+    <p class="error" id="error" hidden></p>
+
+    <figure class="viewer">
+      <div class="toolbar">
+        <div class="group" role="group" aria-label="View">
+          <button type="button" data-view="side-x" aria-pressed="true">Front (x–z)</button>
+          <button type="button" data-view="side-y" aria-pressed="false">Side (y–z)</button>
+          <button type="button" data-view="top" aria-pressed="false">Top (x–y)</button>
+        </div>
+        <div class="group" role="group" aria-label="Structure">
+          <button type="button" data-show="initial" aria-pressed="true">Initial</button>
+          <button type="button" data-show="relaxed" aria-pressed="false" disabled>Relaxed</button>
+        </div>
+        <div class="group" role="group" aria-label="Repeat">
+          <button type="button" data-repeat="1" aria-pressed="false">1×1</button>
+          <button type="button" data-repeat="2" aria-pressed="false">2×2</button>
+          <button type="button" data-repeat="3" aria-pressed="true">3×3</button>
+        </div>
+        <label class="check"><input type="checkbox" id="showCell" checked> Cell</label>
+      </div>
+      <div id="viewer" class="stage"></div>
+      <figcaption id="legend"></figcaption>
+    </figure>
+
+    <ul class="notes" id="warnings"></ul>
+
+    <section class="panel">
+      <h2>Layers</h2>
+      <div class="scroll">
+        <table class="layers">
+          <thead id="layerHead"></thead>
+          <tbody id="layerBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" id="relaxPanel" hidden>
+      <h2>Relaxation <span class="status" id="relaxStatus"></span></h2>
+      <div class="relax">
+        <svg id="chart" viewBox="0 0 420 180" role="img" aria-label="Largest force per optimizer step"></svg>
+        <dl class="stats" id="relaxStats"></dl>
+      </div>
+    </section>
+
+    <section class="panel" id="scanPanel" hidden>
+      <h2>Shift scan <span class="status" id="scanStatus"></span></h2>
+      <div class="scan">
+        <svg id="heatmap" viewBox="0 0 380 260" role="img" aria-label="Energy against metal shift"></svg>
+        <div id="scanText"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Files</h2>
+      <div class="files">
+        <div>
+          <h3>Before relaxation</h3>
+          <p class="buttons">
+            <button type="button" class="secondary" data-export="poscar">POSCAR</button>
+            <button type="button" class="secondary" data-export="extxyz">extXYZ</button>
+            <button type="button" class="secondary" data-export="cif">CIF</button>
+            <button type="button" class="secondary" data-export="lammps">LAMMPS data</button>
+          </p>
+        </div>
+        <div>
+          <h3>After relaxation</h3>
+          <p class="buttons" id="relaxedFiles"><span class="hint">Relax the structure to get these files.</span></p>
+        </div>
+      </div>
+    </section>
+
+    <details class="panel json">
+      <summary>Resolved inputs and outputs</summary>
+      <div class="files">
+        <div><h3>resolved.json</h3><pre id="resolvedJson"></pre></div>
+        <div><h3>outputs.json</h3><pre id="outputsJson">Relax to see the outputs.</pre></div>
+      </div>
+    </details>
+  </div>
+</main>
+
+<footer class="foot">mxbuilder {{ version }}. Same code as <code>python -m mxbuilder</code>; runs are saved under <code>runs/&lt;run id&gt;</code>.</footer>
+
+<script id="options" type="application/json">{{ options|tojson }}</script>
+<script src="{{ url_for('static', filename='vendor/3Dmol-min.js') }}"></script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

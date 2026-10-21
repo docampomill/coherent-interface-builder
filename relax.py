@@ -108,8 +108,52 @@ def relax(inputs, progress=None, should_stop=None):
     relaxed = Structure(atoms.cell[:], atoms.get_chemical_symbols(), atoms.positions, coords_are_cartesian=True,
                         to_unit_cell=False, site_properties=structure.site_properties)
     outputs["relaxation"] = result
+    outputs["comparison"] = compare(structure, relaxed)
     outputs["files"]["POSCAR_relaxed"] = relaxed.get_sorted_structure().to(fmt="poscar")
     return relaxed, outputs
+
+
+def compare(initial, relaxed, top=15):
+    """Built vs relaxed structure (same atom order): displacements, layer heights and spacings, gap and cell."""
+    layers = np.array(initial.site_properties["layer"])
+    parts = np.array(initial.site_properties["part"])
+    frac = relaxed.lattice.get_fractional_coords(relaxed.cart_coords - initial.cart_coords)
+    frac[:, :2] -= np.round(frac[:, :2])               # minimum image in-plane
+    d = relaxed.lattice.get_cartesian_coords(frac)
+    dr = np.linalg.norm(d, axis=1)
+    z0, z1 = initial.cart_coords[:, 2], relaxed.cart_coords[:, 2]
+    r = lambda v, n=4: round(float(v), n)
+
+    rows, zm = [], []                                  # zm: mean z per layer, built and relaxed
+    for i in range(layers.max() + 1):
+        on = layers == i
+        zm.append((z0[on].mean(), z1[on].mean()))
+        rows.append(dict(index=i, part=str(parts[on][0]), z_initial=r(zm[i][0]), z_relaxed=r(zm[i][1]),
+                         dz=r(zm[i][1] - zm[i][0]),
+                         spacing_initial=r(zm[i][0] - zm[i - 1][0]) if i else None,
+                         spacing_relaxed=r(zm[i][1] - zm[i - 1][1]) if i else None,
+                         rumpling=r(np.ptp(z1[on])),                          # z range within the relaxed layer
+                         slide=r(np.linalg.norm(d[on, :2].mean(axis=0))),     # mean in-plane displacement
+                         mean_displacement=r(dr[on].mean())))
+
+    tagged = relaxed.copy(site_properties={"atom": list(range(len(relaxed)))})
+    poscar = np.empty(len(relaxed), dtype=int)                                # atom number in POSCAR_relaxed, from 1
+    poscar[tagged.get_sorted_structure().site_properties["atom"]] = np.arange(1, len(relaxed) + 1)
+    largest = [dict(atom=int(poscar[k]), species=relaxed[k].species_string, layer=int(layers[k]), part=str(parts[k]),
+                    displacement=[r(v) for v in d[k]], norm=r(dr[k])) for k in np.argsort(-dr, kind="stable")[:top]]
+
+    n_mx = int(layers[parts == "mxene"].max()) + 1    # first metal layer
+    cell = lambda s: dict(a=r(s.lattice.a), b=r(s.lattice.b), gamma=r(s.lattice.gamma, 3))
+    return dict(
+        max_displacement=largest[0],
+        rms_displacement=r(np.sqrt((dr**2).mean())),
+        max_displacement_part={p: r(dr[parts == p].max()) for p in ("mxene", "metal")},
+        gap=dict(initial=r(zm[n_mx][0] - zm[n_mx - 1][0]), relaxed=r(zm[n_mx][1] - zm[n_mx - 1][1])),
+        mxene_thickness=dict(initial=r(zm[n_mx - 1][0] - zm[0][0]), relaxed=r(zm[n_mx - 1][1] - zm[0][1])),
+        cell=dict(initial=cell(initial), relaxed=cell(relaxed)),
+        layers=rows,
+        largest=largest,
+    )
 
 
 if __name__ == "__main__":
@@ -118,3 +162,6 @@ if __name__ == "__main__":
     for name, text in outputs["files"].items():
         Path(name).write_text(text)
     Path("outputs.json").write_text(json.dumps(outputs, indent=2) + "\n")
+    c = outputs["comparison"]
+    print(f"max |Δr| {c['max_displacement']['norm']:.3f} Å ({c['max_displacement']['species']} #{c['max_displacement']['atom']}), "
+          f"RMS {c['rms_displacement']:.3f} Å, gap {c['gap']['initial']:.3f} → {c['gap']['relaxed']:.3f} Å")

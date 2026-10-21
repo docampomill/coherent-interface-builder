@@ -157,10 +157,22 @@
         <div class="group" role="group" aria-label="Structure shown">
           <button type="button" data-show="built" aria-pressed="true">Built</button>
           <button type="button" data-show="relaxed" aria-pressed="false" disabled>Relaxed</button>
+          <button type="button" data-show="overlay" aria-pressed="false" disabled title="Relaxed atoms over faded built ones, with displacement arrows">Overlay</button>
+          <button type="button" data-show="split" aria-pressed="false" disabled title="Built on the left, relaxed on the right, same camera">Side by side</button>
         </div>
+        <label class="check" id="arrowWrap" hidden>Arrows
+          <select id="arrowScale" aria-label="Displacement arrow scale">
+            <option value="0">off</option><option value="1">×1</option><option value="5">×5</option>
+            <option value="10" selected>×10</option><option value="20">×20</option>
+          </select>
+        </label>
         <label class="check"><input type="checkbox" id="showCell" checked> Cell</label>
       </div>
-      <div id="viewer" class="stage"></div>
+      <div class="stage" id="stage">
+        <div id="viewer" class="pane"></div>
+        <div id="viewer2" class="pane" hidden></div>
+        <span class="tag first">Built</span><span class="tag second">Relaxed</span>
+      </div>
       <figcaption id="legend"></figcaption>
     </figure>
 
@@ -188,6 +200,31 @@
       <h2>Relaxation</h2>
       <div class="scroll">
         <table><tbody id="relaxBody"></tbody></table>
+      </div>
+    </section>
+
+    <section class="panel" id="comparePanel" hidden>
+      <h2>Built vs relaxed <span class="chip" id="compareChip"></span></h2>
+      <div class="scroll">
+        <table><tbody id="compareBody"></tbody></table>
+      </div>
+      <h3>Layer by layer</h3>
+      <p class="hint">Mean z per layer, spacing to the layer below. Rumpling is the z range of the relaxed layer, slide its mean in-plane displacement. Changes of 0.1 Å or more are marked.</p>
+      <div class="scroll">
+        <table class="layers">
+          <thead><tr><th>#</th><th>Layer</th><th class="num">z built</th><th class="num">z relaxed</th><th class="num">Δz</th>
+            <th class="num">Spacing built</th><th class="num">Spacing relaxed</th><th class="num">Δ spacing</th>
+            <th class="num">Rumpling</th><th class="num">Slide</th><th class="num">⟨|Δr|⟩</th></tr></thead>
+          <tbody id="compareLayers"></tbody>
+        </table>
+      </div>
+      <h3>Largest displacements</h3>
+      <p class="hint">Atom number in POSCAR_relaxed, from 1. All lengths in Å.</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th class="num">Atom</th><th>Element</th><th>Layer</th><th class="num">Δx</th><th class="num">Δy</th><th class="num">Δz</th><th class="num">|Δr|</th></tr></thead>
+          <tbody id="compareAtoms"></tbody>
+        </table>
       </div>
     </section>
 

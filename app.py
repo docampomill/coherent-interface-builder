@@ -60,7 +60,8 @@ def api_planes():
 def run_relaxation(j, inputs):
     try:
         structure, outputs = relax.relax(inputs, progress=j["events"].append, should_stop=j["stop"].is_set)
-        j["result"] = dict(outputs=outputs, structure=structure_json(structure))
+        initial, _ = builder.build(inputs)             # same atom order as the relaxed structure
+        j["result"] = dict(outputs=outputs, structure=structure_json(structure), initial=structure_json(initial))
         j["state"] = "stopped" if outputs["relaxation"]["stopped"] else "done"
     except Exception as exc:
         j["error"], j["state"] = f"{type(exc).__name__}: {exc}", "error"

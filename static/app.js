@@ -105,10 +105,15 @@ const rebuild = debounce(async () => {
   if (state.planes) await loadPlanes(); else draw();
 }, 200);
 
-// The viewer shows the built structure (with planes, if any) or the relaxed one.
+// The viewer shows the built structure (with planes, if any), the relaxed one, the relaxed one over the
+// faded built one, or both side by side.
 function draw() {
-  if (state.show === "relaxed" && state.relaxed) Viewer.draw(state.relaxed.structure, null);
-  else Viewer.draw(state.last.structure, state.planes, state.plane);
+  const r = state.relaxed;
+  $("arrowWrap").hidden = !(r && state.show === "overlay");
+  if (!r || state.show === "built") Viewer.draw(state.last.structure, { planes: state.planes, selected: state.plane });
+  else if (state.show === "relaxed") Viewer.draw(r.structure);
+  else if (state.show === "overlay") Viewer.draw(r.structure, { ghost: r.initial, arrows: Number($("arrowScale").value) });
+  else Viewer.draw(r.initial, { right: r.structure });
 }
 
 function setShow(name) {
@@ -136,15 +141,19 @@ function renderMatch(o) {
   }));
 }
 
+function layerCell(layer) {
+  const elements = Object.keys(layer.species);
+  const name = layer.site ? `${elements[0]} (${siteLabel(elements[0], layer.site)})` : elements.join(" + ");
+  return h("td", { class: "layer" }, elements.map((e) => h("span", { class: "dot", style: `background:${color(e)}` })), name);
+}
+
 function renderLayers(o) {
   const L = o.interface.layers;
   $("layerBody").replaceChildren(...[...L].reverse().map((layer) => {
-    const elements = Object.keys(layer.species);
-    const name = layer.site ? `${elements[0]} (${siteLabel(elements[0], layer.site)})` : elements.join(" + ");
     const below = L[layer.index - 1];
     return h("tr", { class: layer.part === "metal" ? "metal" : null },
       h("td", {}, String(layer.index)),
-      h("td", { class: "layer" }, elements.map((e) => h("span", { class: "dot", style: `background:${color(e)}` })), name),
+      layerCell(layer),
       h("td", { class: "num" }, Object.entries(layer.species).map(([e, n]) => `${e}${n}`).join(" ")),
       h("td", { class: "num" }, fmt(layer.z)), h("td", { class: "num" }, below ? fmt(layer.z - below.z) : "–"));
   }));
@@ -207,10 +216,11 @@ function clearRelaxed() {
   if (!state.relaxed) return;
   state.relaxed = null;
   $("relaxPanel").hidden = true;
+  $("comparePanel").hidden = true;
   $("relaxStatus").textContent = "";
-  document.querySelector("[data-show=relaxed]").disabled = true;
+  document.querySelectorAll("[data-show]:not([data-show=built])").forEach((b) => { b.disabled = true; });
   if (state.last) renderFiles(state.last.outputs);
-  if (state.show === "relaxed") setShow("built");
+  if (state.show !== "built") setShow("built");
 }
 
 async function startRelax() {
@@ -238,8 +248,9 @@ async function startRelax() {
     if (job.state === "error") { showError(job.error); $("relaxStatus").textContent = ""; return; }
     state.relaxed = job.result;
     renderRelaxation(job.result.outputs);
+    renderComparison(job.result.outputs);
     renderFiles(job.result.outputs);
-    document.querySelector("[data-show=relaxed]").disabled = false;
+    document.querySelectorAll("[data-show]").forEach((b) => { b.disabled = false; });
     setShow("relaxed");
     return;
   }
@@ -261,12 +272,56 @@ function renderRelaxation(o) {
   $("relaxPanel").hidden = false;
 }
 
+// Built vs relaxed, from outputs.comparison (computed in relax.py).
+function renderComparison(o) {
+  const c = o.comparison;
+  const signed = (v) => `${v < 0 ? "−" : "+"}${fmt(Math.abs(v))}`;
+  const big = (v) => (v !== null && Math.abs(v) >= 0.1 ? "num big" : "num");
+  const change = (pair, unit, d = 3) => `${fmt(pair.initial, d)} → ${fmt(pair.relaxed, d)} ${unit} (${signed(pair.relaxed - pair.initial)})`;
+  const top = c.max_displacement;
+  const where = (a) => `${a.part === "mxene" ? "MXene" : "metal"}, layer ${a.layer}`;
+  const [c0, c1] = [c.cell.initial, c.cell.relaxed];
+  const rows = [
+    ["Max |Δr|", `${fmt(top.norm)} Å`, `${top.species} #${top.atom}, ${where(top)}`],
+    ["RMS |Δr|", `${fmt(c.rms_displacement)} Å`, ""],
+    ["Max |Δr|, MXene", `${fmt(c.max_displacement_part.mxene)} Å`, ""],
+    [`Max |Δr|, ${o.metal.symbol} slab`, `${fmt(c.max_displacement_part.metal)} Å`, ""],
+    ["MXene–metal gap", change(c.gap, "Å"), ""],
+    ["MXene thickness", change(c.mxene_thickness, "Å"), "bottom to top layer"],
+    ["Cell a, b, γ", `${fmt(c0.a, 4)}, ${fmt(c0.b, 4)}, ${fmt(c0.gamma, 2)} → ${fmt(c1.a, 4)}, ${fmt(c1.b, 4)}, ${fmt(c1.gamma, 2)}`, "Å, Å, °"],
+  ];
+  $("compareChip").textContent = `max |Δr| ${fmt(top.norm)} Å · RMS ${fmt(c.rms_displacement)} Å`;
+  $("compareBody").replaceChildren(...rows.map(([k, v, note]) =>
+    h("tr", {}, h("td", {}, k), h("td", { class: "num" }, v), h("td", { class: "hint" }, note))));
+
+  const built = o.interface.layers;
+  $("compareLayers").replaceChildren(...[...c.layers].reverse().map((L) => {
+    const dSpacing = L.spacing_initial === null ? null : L.spacing_relaxed - L.spacing_initial;
+    return h("tr", { class: L.part === "metal" ? "metal" : null },
+      h("td", {}, String(L.index)), layerCell(built[L.index]),
+      h("td", { class: "num" }, fmt(L.z_initial)), h("td", { class: "num" }, fmt(L.z_relaxed)), h("td", { class: big(L.dz) }, signed(L.dz)),
+      h("td", { class: "num" }, fmt(L.spacing_initial)), h("td", { class: "num" }, fmt(L.spacing_relaxed)),
+      h("td", { class: big(dSpacing) }, dSpacing === null ? "–" : signed(dSpacing)),
+      h("td", { class: "num" }, fmt(L.rumpling)), h("td", { class: "num" }, fmt(L.slide)), h("td", { class: "num" }, fmt(L.mean_displacement)));
+  }));
+  $("compareAtoms").replaceChildren(...c.largest.map((a) => h("tr", {},
+    h("td", { class: "num" }, String(a.atom)),
+    h("td", {}, h("span", { class: "dot", style: `background:${color(a.species)}` }), a.species),
+    h("td", {}, where(a)),
+    ...a.displacement.map((v) => h("td", { class: "num" }, signed(v))),
+    h("td", { class: big(a.norm) }, fmt(a.norm)))));
+  $("comparePanel").hidden = false;
+}
+
 /* ---------- viewer ---------- */
 
 const Viewer = (() => {
-  const viewer = $3Dmol.createViewer($("viewer"), { backgroundColor: "white", orthographic: true, antialias: true });
+  const OPTIONS3D = { backgroundColor: "white", orthographic: true, antialias: true };
+  const viewer = $3Dmol.createViewer($("viewer"), OPTIONS3D);
   const ROTATION = { "side-x": [-Math.SQRT1_2, 0, 0, Math.SQRT1_2], "side-y": [-0.5, -0.5, -0.5, 0.5], top: [0, 0, 0, 1] };
+  const BALL = { sphere: { scale: 0.3, colorscheme: "Jmol" }, stick: { radius: 0.1, colorscheme: "Jmol" } };
   let rotation = ROTATION["side-x"], last = null, model = null;
+  let second = null, split = false;          // right pane of the side-by-side view, made on first use
 
   function images(s) {
     const [a1, a2] = s.cell, atoms = [];
@@ -287,7 +342,9 @@ const Viewer = (() => {
     return edges;
   }
 
-  function drawPlanes(planes, selected) {
+  const xyz = (atoms) => `${atoms.length}\n\n${atoms.map((a) => `${a.elem} ${a.x} ${a.y} ${a.z}`).join("\n")}`;
+
+  function drawPlanes(viewer, planes, selected) {
     const [nx, ny, nz] = planes.normal;
     for (const shape of planes.polygons) {
       const v = shape.vertices.map(([x, y, z]) => ({ x, y, z }));
@@ -315,40 +372,73 @@ const Viewer = (() => {
     viewer.setView(view);
     viewer.zoomTo({ model });
     viewer.render();
+    if (split) { second.setView(viewer.getView()); second.render(); }
   }
 
-  function draw(s, planes = null, selected = 0) {
-    if (!s) return;
-    if (last) rotation = viewer.getView().slice(4, 8);
-    last = { s, planes, selected };
+  // One structure into one 3Dmol viewer. ghost: the built structure drawn faded under s, with displacement
+  // arrows scaled by `arrows` (0 = none). Returns the model of s.
+  function scene(v, s, { planes = null, selected = 0, ghost = null, arrows = 0 } = {}) {
     const atoms = images(s);
-    viewer.clear();
-    model = viewer.addModel(`${atoms.length}\n\n${atoms.map((a) => `${a.elem} ${a.x} ${a.y} ${a.z}`).join("\n")}`, "xyz");
-    viewer.setStyle({}, { sphere: { scale: 0.3, colorscheme: "Jmol" }, stick: { radius: 0.1, colorscheme: "Jmol" } });
+    v.clear();
+    const m = v.addModel(xyz(atoms), "xyz");
+    v.setStyle({ model: m }, BALL);
     if (planes) {
       const marked = atoms.map((a, k) => (onPlane(a, planes, selected) ? k : -1)).filter((k) => k >= 0);
-      viewer.setStyle({ index: marked }, { sphere: { scale: 0.45, colorscheme: "Jmol" }, stick: { radius: 0.1, colorscheme: "Jmol" } });
-      drawPlanes(planes, selected);
+      v.setStyle({ model: m, index: marked }, { sphere: { scale: 0.45, colorscheme: "Jmol" }, stick: { radius: 0.1, colorscheme: "Jmol" } });
+      drawPlanes(v, planes, selected);
+    }
+    const before = ghost ? images(ghost) : null;      // same atom order as atoms
+    if (before) {
+      const g = v.addModel(xyz(before), "xyz");
+      v.setStyle({ model: g }, { sphere: { scale: 0.3, colorscheme: "Jmol", opacity: 0.3 } });
+      if (arrows) before.forEach((a, k) => {
+        const b = atoms[k], d = [b.x - a.x, b.y - a.y, b.z - a.z];
+        if (Math.hypot(...d) < 0.005) return;
+        v.addArrow({ start: { x: a.x, y: a.y, z: a.z }, end: { x: a.x + arrows * d[0], y: a.y + arrows * d[1], z: a.z + arrows * d[2] },
+          radius: 0.05, radiusRatio: 2.2, mid: 0.7, color: "#b3261e" });
+      });
     }
     if ($("showCell").checked) {
-      cellEdges(s.cell).forEach(([start, end]) => viewer.addCylinder({ start, end, radius: 0.04, color: "#9aa1ad", fromCap: 1, toCap: 1 }));
+      cellEdges(s.cell).forEach(([start, end]) => v.addCylinder({ start, end, radius: 0.04, color: "#9aa1ad", fromCap: 1, toCap: 1 }));
     }
-    viewer.setHoverable({}, true, (atom, v) => {
-      const a = atoms[atom.index];
-      if (!atom.label) atom.label = v.addLabel(`${a.elem}, ${a.part === "mxene" ? "MXene" : "metal"}, layer ${a.layer}`,
+    v.setHoverable({ model: m }, true, (atom, view) => {
+      const a = atoms[atom.index], b = before?.[atom.index];
+      const moved = b ? `, |Δr| ${fmt(Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z))} Å` : "";
+      if (!atom.label) atom.label = view.addLabel(`${a.elem}, ${a.part === "mxene" ? "MXene" : "metal"}, layer ${a.layer}${moved}`,
         { position: atom, inFront: true, fontSize: 12, fontColor: "white", backgroundColor: "#1c2230", backgroundOpacity: 0.85 });
-    }, (atom, v) => { if (atom.label) { v.removeLabel(atom.label); delete atom.label; } });
+    }, (atom, view) => { if (atom.label) { view.removeLabel(atom.label); delete atom.label; } });
+    return m;
+  }
+
+  // opts: planes and selected (built structure), ghost and arrows (overlay), right (second pane, same camera).
+  function draw(s, opts = {}) {
+    if (!s) return;
+    if (last) rotation = viewer.getView().slice(4, 8);
+    last = { s, opts };
+    split = Boolean(opts.right);
+    $("stage").classList.toggle("split", split);
+    $("viewer2").hidden = !split;
+    if (split && !second) {
+      second = $3Dmol.createViewer($("viewer2"), OPTIONS3D);
+      viewer.linkViewer(second);
+      second.linkViewer(viewer);
+    }
+    viewer.resize();
+    model = scene(viewer, s, opts);
+    if (split) { second.resize(); scene(second, opts.right); }
+    else if (second) { second.clear(); }
     fit();
     $("legend").replaceChildren(...[...new Set(s.symbols)].map((e) =>
-      h("span", {}, h("span", { class: "dot", style: `background:${color(e)}` }), e)));
+      h("span", {}, h("span", { class: "dot", style: `background:${color(e)}` }), e)),
+      ...(opts.ghost ? [h("span", { class: "hint" }, `Faded: built positions${opts.arrows ? `; arrows: displacement ×${opts.arrows}` : ""}`)] : []));
   }
 
   const self = {
     repeat: 1,
     draw,
     orient(name) { rotation = ROTATION[name]; fit(); },
-    redraw() { if (last) draw(last.s, last.planes, last.selected); },
-    resize() { viewer.resize(); viewer.render(); },
+    redraw() { if (last) draw(last.s, last.opts); },
+    resize() { viewer.resize(); viewer.render(); if (split) { second.resize(); second.render(); } },
   };
   return self;
 })();
@@ -383,6 +473,7 @@ $("showPlanes").addEventListener("click", () => { state.plane = 0; loadPlanes();
 $("hidePlanes").addEventListener("click", hidePlanes);
 $("showCell").addEventListener("change", () => Viewer.redraw());
 document.querySelectorAll("[data-show]").forEach((b) => b.addEventListener("click", () => setShow(b.dataset.show)));
+$("arrowScale").addEventListener("change", draw);
 $("relaxBtn").addEventListener("click", startRelax);
 $("stopBtn").addEventListener("click", () => fetch("/api/relax/stop", { method: "POST" }));
 $("saveInputs").addEventListener("click", () =>

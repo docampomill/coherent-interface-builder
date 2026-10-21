@@ -1,9 +1,0 @@
-{
-  "mxene_layers": ["O", "Mo", "C", "Ti", "C", "Mo", "O"],
-  "metal": "Au",
-  "metal_layers": 4,
-  "geometry": "sandwich",
-  "mxene_supercell": [5, 2],
-  "metal_supercell": [5, 1],
-  "relax": false
-}

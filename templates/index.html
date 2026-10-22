@@ -58,7 +58,21 @@
             {% endfor %}
           </select>
         </label>
-        <label>Layers, (001) planes <input id="metal_layers" type="number" step="1" min="1" max="40"></label>
+        <label>Layers, (111) planes <input id="metal_layers" type="number" step="1" min="1" max="40"></label>
+      </div>
+      <div class="grid2">
+        <label>First layer site
+          <select id="metal_site">
+            <option value="auto">auto · free of the top two MXene layers</option>
+            <option value="A">A</option><option value="B">B</option><option value="C">C</option>
+          </select>
+        </label>
+        <label>Stacking
+          <select id="metal_stacking">
+            <option value="ABC">A → B → C · continues the MXene</option>
+            <option value="ACB">A → C → B · twin</option>
+          </select>
+        </label>
       </div>
       <p class="hint" id="metalSource"></p>
     </section>
@@ -73,7 +87,7 @@
         <label>Max replicas <input id="max_replicas" type="number" step="1" min="1" max="30"></label>
         <label>Vacuum below (Å) <input id="vacuum" type="number" step="0.5" min="0"></label>
       </div>
-      <p class="hint">Metal (001) on MXene (0001), metal [100] along x. The metal takes the in-plane strain.</p>
+      <p class="hint">Metal (111) on MXene (0001), metal [1-10] along x. The gap is from the top MXene layer to the first metal (111) plane; the shift moves the metal from its site. The metal takes the in-plane strain.</p>
     </section>
 
     <section>
@@ -81,7 +95,7 @@
       <fieldset class="seg">
         <legend>(hkl) in the cell of</legend>
         <label><input type="radio" name="plane_part" value="mxene" checked><span>MXene</span><small>a × √3a × c</small></label>
-        <label><input type="radio" name="plane_part" value="metal"><span>Metal</span><small>cubic, strained</small></label>
+        <label><input type="radio" name="plane_part" value="metal"><span>Metal</span><small>cubic, strained; [111] ∥ z</small></label>
       </fieldset>
       <div class="grid3">
         <label>h <input id="ph" type="number" step="1" value="0"></label>

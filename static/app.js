@@ -60,6 +60,8 @@ function collectInputs() {
     vacuum: num("vacuum", d.vacuum),
     metal: $("metal").value,
     metal_layers: num("metal_layers", d.metal_layers),
+    metal_site: $("metal_site").value,
+    metal_stacking: $("metal_stacking").value,
     gap: num("gap", d.gap),
     shift: [num("shift_x", 0), num("shift_y", 0)],
     tol: num("tol", d.tol),
@@ -80,6 +82,8 @@ function applyInputs(given) {
   $("mxene").value = p.mxene;
   document.querySelector(`input[name=stacking][value=${p.stacking}]`).checked = true;
   $("metal").value = p.metal;
+  $("metal_site").value = p.metal_site;
+  $("metal_stacking").value = p.metal_stacking;
   for (const k of ["vacuum", "metal_layers", "gap", "tol", "max_replicas", "model", "head", "fmax", "max_steps", "fixed_layers"]) $(k).value = p[k];
   for (const k of ["dispersion", "relax_cell", "work_of_adhesion"]) $(k).checked = p[k];
   [$("shift_x").value, $("shift_y").value] = p.shift;
@@ -97,7 +101,7 @@ const rebuild = debounce(async () => {
   }
   const o = state.last.outputs;
   $("mxeneSource").textContent = `a = ${o.mxene.a} Å (${o.mxene.family}, termination ${o.mxene.termination}; ${o.mxene.source}).`;
-  $("metalSource").textContent = `${o.metal.name}, ${o.metal.structure} ${o.metal.space_group}, a = ${o.metal.a} Å (${o.metal.source}).`;
+  $("metalSource").textContent = `${o.metal.name}, ${o.metal.structure} ${o.metal.space_group}, a = ${o.metal.a} Å, a₁₁₁ = ${fmt(o.metal.a111, 4)} Å, d₁₁₁ = ${fmt(o.metal.d111, 4)} Å (${o.metal.source}).`;
   renderReadout(o);
   renderMatch(o);
   renderLayers(o);
@@ -123,9 +127,9 @@ function setShow(name) {
 }
 
 function renderReadout(o) {
-  $("formula").innerHTML = `${subscripts(o.metal.symbol)}(001) / ${subscripts(o.mxene.formula)}(0001)`;
+  $("formula").innerHTML = `${subscripts(o.metal.symbol)}(111) / ${subscripts(o.mxene.formula)}(0001)`;
   $("sequence").innerHTML = o.mxene.layers.map((e, i) => `${e}(${siteLabel(e, o.mxene.sites[i])})`).join(" ")
-    + `<span class="bar">|</span>${o.metal.symbol} × ${o.metal.layers}`;
+    + `<span class="bar">|</span>` + o.metal.sites.map((s) => `${o.metal.symbol}(${s})`).join(" ");
   const [bx, by, bz] = o.interface.box;
   const chips = [o.interface.formula, `${o.interface.n_atoms} atoms`, `${fmt(bx, 2)} × ${fmt(by, 2)} × ${fmt(bz, 2)} Å`,
     `εx ${pct(o.match.x.strain)}`, `εy ${pct(o.match.y.strain)}`];
@@ -133,7 +137,7 @@ function renderReadout(o) {
 }
 
 function renderMatch(o) {
-  $("matchBody").replaceChildren(...[["x", o.mxene.cell[0], o.metal.a], ["y", o.mxene.cell[1], o.metal.a]].map(([axis, Lmx, Lm]) => {
+  $("matchBody").replaceChildren(...[["x", o.mxene.cell[0], o.metal.cell[0]], ["y", o.mxene.cell[1], o.metal.cell[1]]].map(([axis, Lmx, Lm]) => {
     const m = o.match[axis];
     return h("tr", {}, h("td", {}, axis),
       h("td", { class: "num" }, `${m.mxene} × ${fmt(Lmx, 4)}`), h("td", { class: "num" }, `${m.metal} × ${fmt(Lm, 4)}`),

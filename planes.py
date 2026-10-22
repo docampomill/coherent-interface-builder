@@ -1,8 +1,8 @@
 """Atomic planes (hkl) of the MXene or of the metal inside the interface.
 
-Indices refer to that crystal's conventional orthogonal cell: a × √3a × c for the MXene
-(its c includes the vacuum, so planes with l ≠ 0 tilt with it) and the strained cubic cell
-for the metal. An atomic plane is a set of atoms with the same projection on the plane normal;
+Indices refer to that crystal's conventional cell, given as its three vectors in the interface frame:
+a × √3a × c for the MXene (its c includes the vacuum, so planes with l ≠ 0 tilt with it) and the
+strained cubic cell for the metal, whose [111] is along z. An atomic plane is a set of atoms with the same projection on the plane normal;
 planes of one family repeat every d_hkl.
 """
 import itertools
@@ -22,7 +22,7 @@ def miller(indices):
 
 def atomic_planes(structure, part, cell, hkl, tol=0.05):
     """Distinct atomic planes of one part ("mxene" or "metal") within one period d."""
-    g = np.array(hkl, dtype=float) @ Lattice.orthorhombic(*cell).reciprocal_lattice_crystallographic.matrix
+    g = np.array(hkl, dtype=float) @ Lattice(cell).reciprocal_lattice_crystallographic.matrix
     d = 1.0 / np.linalg.norm(g)
     n = g * d
     proj = (structure.cart_coords @ n) % d

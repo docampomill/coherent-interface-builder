@@ -17,11 +17,13 @@ from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 SPREADSHEET = Path(__file__).parent / "data" / "MXene_FCC_L12_strain_matrix.xlsx"
 
 DEFAULTS = dict(
-    mxene="Ti3C2",       # MXenes sheet, Formula
+    mxene="V2C",         # MXenes sheet, Formula
     stacking="ABC",      # ABC = AβC (octahedral), ABA = AβA (trigonal prismatic)
     vacuum=20.0,         # Å, below the MXene only
     metal="Au",          # Metals sheet, Symbol
-    metal_layers=4,      # metal (001) atomic planes
+    metal_layers=4,      # metal (111) atomic planes
+    metal_site="auto",   # A, B or C site of the first metal (111) layer; auto = the one free of the top two MXene layers
+    metal_stacking="ABC",  # ABC continues the MXene's A → B → C sense upward; ACB is its twin
     gap=2.3,             # Å, top MXene layer to first metal layer
     shift=[0.0, 0.0],    # Å, in-plane shift of the metal along x and y
     tol=0.02,            # largest |strain| allowed on the metal along x and along y
@@ -32,6 +34,18 @@ SITES = {"A": (0, 0), "B": (0, 1 / 3), "C": (1 / 2, 1 / 6)}    # hexagonal A, B,
 D_MX = 0.385                                                  # M–X layer spacing / a
 BOND_MO = 2.0                                                 # Å, M–O bond that sets the O layer height
 SPACE_GROUP = {"FCC": ("Fm-3m", 225), "L12": ("Pm-3m", 221)}
+ORIENT = [[1, -1, 0], [1, 1, -2], [1, 1, 1]]                  # cubic → x ∥ [1-10], y ∥ [11-2], z ∥ [111]
+NEXT = {"ABC": {"A": "B", "B": "C", "C": "A"}, "ACB": {"A": "C", "C": "B", "B": "A"}}
+
+
+def site_of(fx, fy):
+    """A, B or C for a point of a hexagonal net, in fractions of its a × √3a cell."""
+    for name, (x, y) in SITES.items():
+        for dx, dy in [(0, 0), (0.5, 0.5)]:
+            ex, ey = (fx - x - dx) % 1, (fy - y - dy) % 1
+            if min(ex, 1 - ex) < 1e-3 and min(ey, 1 - ey) < 1e-3:
+                return name
+    raise ValueError(f"({fx:.4f}, {fy:.4f}) is not on an A, B or C site")
 
 
 def mxene_layers(formula):
@@ -57,9 +71,12 @@ def read_spreadsheet(path=SPREADSHEET):
     for f, family, termination, a, source, *_ in book["MXenes"].iter_rows(min_row=3, values_only=True):
         if f and isinstance(a, (int, float)) and mxene_layers(str(f)):
             mxenes[f] = dict(formula=f, family=family, termination=termination, a=float(a), source=source)
-    for symbol, name, structure, a, _, source, *_ in book["Metals"].iter_rows(min_row=3, values_only=True):
+    for symbol, name, structure, a, a111, source, *_ in book["Metals"].iter_rows(min_row=3, values_only=True):
         if symbol and isinstance(a, (int, float)) and re.fullmatch(r"[A-Z][a-z]?(3[A-Z][a-z]?)?", symbol):
-            metals[symbol] = dict(symbol=symbol, name=name, structure=structure, a=float(a), source=source)
+            if not isinstance(a111, (int, float)) or abs(a111 - a / math.sqrt(2)) > 1e-3:
+                raise ValueError(f"{symbol}: a_111 = {a111} is not a_cubic/√2 = {a / math.sqrt(2):.4f}")
+            metals[symbol] = dict(symbol=symbol, name=name, structure=structure, a=float(a), a111=float(a111),
+                                  source=source)
     book.close()
     return mxenes, metals
 
@@ -73,6 +90,8 @@ def build(inputs):
     p = {**DEFAULTS, **inputs}
     if p["mxene"] not in MXENES or p["metal"] not in METALS:
         raise ValueError(f"{p['mxene']} or {p['metal']} is not a row of {SPREADSHEET.name}")
+    if p["metal_site"] not in ("auto", *SITES) or p["metal_stacking"] not in NEXT:
+        raise ValueError("metal_site is auto, A, B or C; metal_stacking is ABC or ACB")
 
     # ---------------- MXene: conventional (orthogonal) cell, vacuum only below ----------------
     row = MXENES[p["mxene"]]
@@ -116,9 +135,39 @@ def build(inputs):
         metal = Structure.from_spacegroup(symbol, Lattice.cubic(a_m), [B, A], [[0, 0, 0], [0, 0.5, 0.5]])
     assert SpacegroupAnalyzer(metal, symprec=1e-3).get_space_group_number() == number
 
+    # ---------------- Metal (111) as stacked hexagonal layers, in the same a × √3a form as the MXene ----------------
+    # The [1-10], [11-2], [111] supercell is orthogonal and right-handed, so an orthorhombic lattice with the same
+    # fractional coordinates is the cubic crystal rotated to x ∥ [1-10], y ∥ [11-2], z ∥ [111]: 3 layers, 8 atoms each.
+    a111, d111 = metal_row["a111"], a_m / math.sqrt(3)
+    rotated = metal.copy()
+    rotated.make_supercell(ORIENT)
+    frac = np.round(rotated.frac_coords, 8) % 1           # rounded: -1e-17 must wrap to 0, not to 1
+    if metal_row["structure"] == "FCC":                # one atom of the hexagonal net per 1/2 × 1/2: the a111 × √3a111 cell
+        keep = (frac[:, 0] < 0.5 - 1e-6) & (frac[:, 1] < 0.5 - 1e-6)
+        net = 1                                        # cell = net × (a111 × √3a111)
+        species, frac = [rotated[k].species_string for k in np.flatnonzero(keep)], frac[keep] * [2, 2, 1]
+    else:                                              # L12 keeps 2a111 × 2√3a111: B forms a 2 × 2 superlattice
+        net = 2
+        species = [s.species_string for s in rotated]
+    assert np.allclose(rotated.lattice.abc, [2 * a111, 2 * np.sqrt(3) * a111, 3 * d111], atol=1e-3)
+    oriented = Structure(Lattice.orthorhombic(net * a111, net * np.sqrt(3) * a111, 3 * d111), species, frac)
+    assert len(oriented) == 6 * net**2
+
+    # Bottom layer onto site A, then mirror y (B ↔ C) if the layers climb in the other sense.
+    nxt = NEXT[p["metal_stacking"]]
+    origin = next(f for f in oriented.frac_coords if f[2] < 1e-6)
+    frac = np.round(oriented.frac_coords - [origin[0], origin[1], 0], 8) % 1
+    second = next(f for f in frac if abs(f[2] - 1 / 3) < 1e-6)
+    mirror = site_of(second[0] * net, second[1] * net) != nxt["A"]
+    if mirror:
+        frac[:, 1] = -frac[:, 1] % 1
+    oriented = Structure(oriented.lattice, oriented.species, frac)
+    for f in oriented.frac_coords:                     # layers 0, 1, 2 on A, then the stacking
+        assert site_of(f[0] * net, f[1] * net) == ["A", nxt["A"], nxt[nxt["A"]]][round(f[2] * 3) % 3]
+
     # ---------------- In-plane replicas giving (approximately) the same box ----------------
     replicas = []                                      # per direction: (MXene replicas, metal replicas, strain on metal)
-    for L_mx, L_m in zip(mxene.lattice.abc[:2], metal.lattice.abc[:2]):
+    for L_mx, L_m in zip(mxene.lattice.abc[:2], oriented.lattice.abc[:2]):
         for m in range(1, p["max_replicas"] + 1):
             n = max(1, round(m * L_mx / L_m))
             strain = m * L_mx / (n * L_m) - 1
@@ -129,11 +178,15 @@ def build(inputs):
             raise ValueError(f"No match within {p['tol']:.1%} up to {p['max_replicas']} replicas; raise the tolerance or max replicas")
     (mx_x, m_x, eps_x), (mx_y, m_y, eps_y) = replicas
 
-    # ---------------- Location: metal (001) on MXene (0001), metal [100] along x ----------------
+    # ---------------- Location: metal (111) on MXene (0001), metal [1-10] along x ----------------
     gap, shift, n_layers = p["gap"], p["shift"], p["metal_layers"]
-    metal_super = metal.copy()
-    metal_super.make_supercell([m_x, m_y, math.ceil(n_layers / 2)])       # two (001) planes per cubic cell
-    metal_super.remove_sites([k for k, s in enumerate(metal_super) if s.coords[2] > (n_layers - 1) * a_m / 2 + 1e-3])
+    first = ({"A", "B", "C"} - {sites[-1], sites[-2]}).pop() if p["metal_site"] == "auto" else p["metal_site"]
+    metal_sites = [first]
+    while len(metal_sites) < n_layers:
+        metal_sites.append(nxt[metal_sites[-1]])
+    metal_super = oriented.copy()
+    metal_super.make_supercell([m_x, m_y, math.ceil(n_layers / 3)])       # three (111) planes per oriented cell
+    metal_super.remove_sites([k for k, s in enumerate(metal_super) if s.coords[2] > (n_layers - 1) * d111 + 1e-3])
 
     box_x, box_y = mx_x * mxene.lattice.a, mx_y * mxene.lattice.b
     z_top = c + gap + metal_super.cart_coords[:, 2].max()                  # vacuum only below the MXene
@@ -148,12 +201,14 @@ def build(inputs):
                 layer.append(s.properties["layer"])
                 part.append("mxene")
 
+    # Bottom metal layer is on A at the origin; move it to the first site of the MXene grid, then add the shift.
+    offset = np.array(SITES[first]) * [a, np.sqrt(3) * a] + shift
     for s in metal_super:                              # same fractional x, y in the matched box = strained metal
         species.append(s.species_string)
-        x = (s.frac_coords[0] + shift[0] / box_x) % 1 * box_x
-        y = (s.frac_coords[1] + shift[1] / box_y) % 1 * box_y
+        x = (s.frac_coords[0] + offset[0] / box_x) % 1 * box_x
+        y = (s.frac_coords[1] + offset[1] / box_y) % 1 * box_y
         coords.append([x, y, c + gap + s.coords[2]])
-        layer.append(len(layers) + round(s.coords[2] / (a_m / 2)))
+        layer.append(len(layers) + round(s.coords[2] / d111))
         part.append("metal")
 
     interface = Structure(interface_lattice, species, coords, coords_are_cartesian=True, to_unit_cell=False,
@@ -165,16 +220,25 @@ def build(inputs):
     for i in range(len(layers) + n_layers):
         on = [k for k, L in enumerate(layer) if L == i]
         names = [species[k] for k in on]
-        stack.append(dict(index=i, part=part[on[0]], site=sites[i] if i < len(layers) else None,
+        stack.append(dict(index=i, part=part[on[0]], site=sites[i] if i < len(layers) else metal_sites[i - len(layers)],
                           species={e: names.count(e) for e in dict.fromkeys(names)}, z=round(float(z[on].mean()), 4)))
 
     r = lambda v, n=4: round(float(v), n)
+    # Cubic cell vectors in the interface frame (rows), strained like the metal: (hkl) in the viewer stay cubic.
+    rotation = np.array(ORIENT, dtype=float) / np.linalg.norm(ORIENT, axis=1)[:, None]
+    if mirror:
+        rotation[1] *= -1
+    strain = [box_x / (m_x * oriented.lattice.a), box_y / (m_y * oriented.lattice.b), 1.0]
+    strained_matrix = a_m * rotation.T * strain
     outputs = dict(
         inputs=p,
         mxene=dict(**row, stacking=p["stacking"], layers=layers, sites=sites, cell=[r(a), r(np.sqrt(3) * a), r(c)],
                    thickness=r(heights[-1])),
-        metal=dict(**metal_row, space_group=f"{symbol} ({number})", layers=n_layers,
-                   strained_cell=[r(box_x / m_x), r(box_y / m_y), r(a_m)]),
+        metal=dict(**metal_row, space_group=f"{symbol} ({number})", layers=n_layers, d111=r(d111),
+                   orientation="(111) ∥ MXene (0001), [1-10] ∥ x, [11-2] ∥ y", stacking=p["metal_stacking"],
+                   sites=metal_sites, cell=[r(v) for v in oriented.lattice.abc],
+                   strained_cell=[r(box_x / m_x), r(box_y / m_y), r(3 * d111)],
+                   strained_matrix=np.round(strained_matrix + 0.0, 6).tolist()),
         match=dict(x=dict(mxene=mx_x, metal=m_x, length=r(box_x), strain=r(eps_x, 6)),
                    y=dict(mxene=mx_y, metal=m_y, length=r(box_y), strain=r(eps_y, 6))),
         interface=dict(formula=interface.composition.formula, n_atoms=len(interface), box=[r(box_x), r(box_y), r(z_top)],

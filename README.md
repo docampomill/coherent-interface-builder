@@ -5,9 +5,9 @@ Builds an MXene/metal interface in one orthogonal box, relaxes it with a MACE ma
 ## What it does
 
 1. **MXene.** Ordered MXene (e.g. Ti₃C₂O₂, Mo₂TiC₂O₂) in its conventional a × √3a × c cell, with AβC (octahedral) or AβA (trigonal prismatic) stacking. Vacuum is only below the MXene, so its top layer is at z = c.
-2. **Metal.** Conventional cubic cell built from its space group: FCC `Fm-3m` (4a), or L1₂ `Pm-3m` (B at 1a, A at 3c).
+2. **Metal.** Conventional cubic cell built from its space group: FCC `Fm-3m` (4a), or L1₂ `Pm-3m` (B at 1a, A at 3c). It is then turned so that [111] is along z: a stack of close-packed (111) layers, d₁₁₁ = a_cubic/√3 apart, in the same a × √3a form as the MXene with a → a₁₁₁ (a₁₁₁ × √3a₁₁₁ for FCC, 2a₁₁₁ × 2√3a₁₁₁ for L1₂, whose B atoms form a 2 × 2 superlattice in each layer).
 3. **Supercell.** Along x and along y, the tool finds the smallest whole number of MXene replicas that matches a whole number of metal replicas within the strain tolerance. The metal takes the strain (see [Supercell matching](#supercell-matching)).
-4. **Placement.** Metal (001) on MXene (0001), metal [100] along x, at a set gap above the top MXene layer, with an optional in-plane shift.
+4. **Placement.** Metal (111) on MXene (0001), metal [1-10] along x, layer by layer: the first metal (111) plane sits at a set gap above the top MXene layer, on site A, B or C of the MXene grid, and the metal layers then follow A → B → C (or its twin). An optional in-plane shift moves the metal off the site.
 5. **Relaxation.** MACE (default MACE-MH-1, `omat_pbe` head) in float64, optional D3(BJ) dispersion and FIRE. The outermost metal layers are held fixed, and the in-plane cell can relax too. Optionally reports the work of adhesion.
 6. **Built vs relaxed.** Per-atom displacements, layer heights and spacings, the gap, the MXene thickness and the cell, before and after relaxation (see below).
 7. **Atomic planes.** Shows the (hkl) planes of the MXene cell or of the strained metal cell in the viewer.
@@ -19,21 +19,22 @@ Fixed geometry rules for the starting structure:
 - The O height comes from a 2.0 Å M–O bond.
 - AβC puts the central layer on A. AβA puts the metals on A and C/N on B.
 - O sits on the site that neither of its two nearest layers uses.
+- With `metal_site` = `auto`, the first metal layer takes the same rule: the site free of the top two MXene layers, so the close-packed stacking carries on into the metal.
 
 ## Supercell matching
 
-The MXene cell (a × √3a) and the metal's cubic cell (a_m × a_m) are both rectangular, so the two in-plane directions are matched separately. For each direction, with cell lengths L_MX (a along x, √3a along y) and L_M (a_m):
+The MXene basal plane and the metal (111) plane are both hexagonal nets, written as rectangular cells: a × √3a for the MXene and a₁₁₁ × √3a₁₁₁ for the metal (`a_111 (A)` in the spreadsheet; twice that for L1₂). The two in-plane directions are matched separately. For each direction, with cell lengths L_MX (a along x, √3a along y) and L_M (a₁₁₁ or √3a₁₁₁):
 
 1. Try m = 1, 2, … up to `max_replicas` MXene replicas.
 2. For each m, take the whole number of metal replicas closest to the same length: n = round(m · L_MX / L_M), at least 1.
 3. The metal strain is ε = m · L_MX / (n · L_M) − 1.
 4. Keep the first m with |ε| ≤ `tol`. This gives the smallest supercell that fits the tolerance.
 
-The box is then m_x · a by m_y · √3a. The MXene keeps its lattice constant, and the metal is strained by ε_x and ε_y to fill the box exactly. If no m up to `max_replicas` works in either direction, the build stops with an error; raise `tol` or `max_replicas`.
+The box is then m_x · a by m_y · √3a. The MXene keeps its lattice constant, and the metal is strained by ε_x and ε_y to fill the box exactly. Both cells have the same √3 aspect ratio, so x and y give the same m, n and ε: the metal (111) net takes an equi-biaxial strain, and at m = n = 1 it is the value in the spreadsheet's `Strain` sheet. If no m up to `max_replicas` works, the build stops with an error; raise `tol` or `max_replicas`.
 
-For example, Au (a_m = 4.078 Å) on Ti₃C₂ (a = 3.104 Å):
-- Along x, 4 MXene cells (12.416 Å) match 3 Au cells, with ε_x = +1.5 %.
-- Along y, 3 MXene cells (16.129 Å) match 4 Au cells, with ε_y = −1.1 %.
+For example:
+- Au (a₁₁₁ = 2.884 Å) on V₂C (a = 2.881 Å): 1 × 1, ε = −0.09 %.
+- Au on Ti₃C₂ (a = 3.104 Å): 1 × 1 would be +7.6 %. The first coincidence within 2 % is 11 MXene cells on 12 Au cells (ε = −1.3 %), so it needs `max_replicas` ≥ 11; 13 : 14 gives −0.05 %.
 
 The *Box* panel in the web app and `outputs.json → match` report m, n, the box length and ε for each direction.
 
@@ -68,13 +69,15 @@ python relax.py inputs.json       # build and relax: adds POSCAR_relaxed and the
 
 | Name | Default | Meaning |
 |---|---|---|
-| `mxene` | `Ti3C2` | Formula, a row of the MXenes sheet |
+| `mxene` | `V2C` | Formula, a row of the MXenes sheet |
 | `stacking` | `ABC` | `ABC` = AβC (octahedral), `ABA` = AβA (trigonal prismatic) |
 | `vacuum` | 20.0 | Å, below the MXene only |
 | `metal` | `Au` | Symbol, a row of the Metals sheet |
-| `metal_layers` | 4 | metal (001) atomic planes |
-| `gap` | 2.3 | Å, top MXene layer to first metal layer |
-| `shift` | [0, 0] | Å, in-plane shift of the metal along x, y |
+| `metal_layers` | 4 | metal (111) atomic planes |
+| `metal_site` | `auto` | site of the first metal layer on the MXene grid: `A`, `B`, `C`, or `auto` (free of the top two MXene layers) |
+| `metal_stacking` | `ABC` | `ABC` continues the MXene's A → B → C sense upward, `ACB` is the twin |
+| `gap` | 2.3 | Å, top MXene layer to first metal (111) layer |
+| `shift` | [0, 0] | Å, in-plane shift of the metal along x, y, from its site |
 | `tol` | 0.02 | largest \|strain\| on the metal along x and y |
 | `max_replicas` | 10 | largest number of MXene replicas tried per direction |
 | `model` | `mh-1` | MACE foundation model |
@@ -90,7 +93,7 @@ python relax.py inputs.json       # build and relax: adds POSCAR_relaxed and the
 
 - `inputs`: every input used, defaults filled in.
 - `mxene`: spreadsheet row, layers, sites, cell and thickness.
-- `metal`: spreadsheet row, space group and strained cell.
+- `metal`: spreadsheet row (with a₁₁₁), space group, d₁₁₁, orientation, layer sites, the (111) cell before and after strain and the strained cubic cell vectors.
 - `match`: replicas, box length and metal strain along x and y.
 - `interface`: formula, atom count, box and per-layer table.
 - `spreadsheet`: file name and SHA-256.
@@ -129,7 +132,7 @@ Displacements are Cartesian, using the minimum image in-plane. When the in-plane
 
 ## Atomic planes
 
-(hkl) refer to the MXene a × √3a × c cell or to the metal's strained cubic cell. The MXene c includes the vacuum, so MXene planes with l ≠ 0 tilt with it.
+(hkl) refer to the MXene a × √3a × c cell or to the metal's strained cubic cell, whose [111] is along z, so metal (111) planes are the horizontal layers. The MXene c includes the vacuum, so MXene planes with l ≠ 0 tilt with it.
 
 ## Files
 

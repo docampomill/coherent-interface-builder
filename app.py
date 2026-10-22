@@ -51,7 +51,7 @@ def api_build():
 def api_planes():
     body = request.get_json()
     structure, outputs = builder.build(body["inputs"])
-    cell = outputs["mxene"]["cell"] if body["part"] == "mxene" else outputs["metal"]["strained_cell"]
+    cell = np.diag(outputs["mxene"]["cell"]) if body["part"] == "mxene" else outputs["metal"]["strained_matrix"]
     result = planes.atomic_planes(structure, body["part"], cell, planes.miller(body["hkl"]))
     result["polygons"] = planes.plane_polygons(structure, result, [int(v) for v in body.get("repeat", [1, 1])])
     return jsonify(result)

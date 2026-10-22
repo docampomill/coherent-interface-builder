@@ -6,7 +6,7 @@ Builds an MXene/metal interface in one orthogonal box, relaxes it with a MACE ma
 
 1. **MXene.** Ordered MXene (e.g. Ti₃C₂O₂, Mo₂TiC₂O₂) in its conventional a × √3a × c cell, with AβC (octahedral) or AβA (trigonal prismatic) stacking. Vacuum is only below the MXene, so its top layer is at z = c.
 2. **Metal.** Conventional cubic cell built from its space group: FCC `Fm-3m` (4a), or L1₂ `Pm-3m` (B at 1a, A at 3c).
-3. **Box.** Along x and along y, the tool finds the smallest number of MXene replicas that matches a whole number of metal replicas within the strain tolerance. The metal takes the strain.
+3. **Supercell.** Along x and along y, the tool finds the smallest whole number of MXene replicas that matches a whole number of metal replicas within the strain tolerance. The metal takes the strain (see [Supercell matching](#supercell-matching)).
 4. **Placement.** Metal (001) on MXene (0001), metal [100] along x, at a set gap above the top MXene layer, with an optional in-plane shift.
 5. **Relaxation.** MACE (default MACE-MH-1, `omat_pbe` head) in float64, optional D3(BJ) dispersion and FIRE. The outermost metal layers are held fixed, and the in-plane cell can relax too. Optionally reports the work of adhesion.
 6. **Built vs relaxed.** Per-atom displacements, layer heights and spacings, the gap, the MXene thickness and the cell, before and after relaxation (see below).
@@ -19,6 +19,23 @@ Fixed geometry rules for the starting structure:
 - The O height comes from a 2.0 Å M–O bond.
 - AβC puts the central layer on A. AβA puts the metals on A and C/N on B.
 - O sits on the site that neither of its two nearest layers uses.
+
+## Supercell matching
+
+The MXene cell (a × √3a) and the metal's cubic cell (a_m × a_m) are both rectangular, so the two in-plane directions are matched separately. For each direction, with cell lengths L_MX (a along x, √3a along y) and L_M (a_m):
+
+1. Try m = 1, 2, … up to `max_replicas` MXene replicas.
+2. For each m, take the whole number of metal replicas closest to the same length: n = round(m · L_MX / L_M), at least 1.
+3. The metal strain is ε = m · L_MX / (n · L_M) − 1.
+4. Keep the first m with |ε| ≤ `tol`. This gives the smallest supercell that fits the tolerance.
+
+The box is then m_x · a by m_y · √3a. The MXene keeps its lattice constant, and the metal is strained by ε_x and ε_y to fill the box exactly. If no m up to `max_replicas` works in either direction, the build stops with an error; raise `tol` or `max_replicas`.
+
+For example, Au (a_m = 4.078 Å) on Ti₃C₂ (a = 3.104 Å):
+- Along x, 4 MXene cells (12.416 Å) match 3 Au cells, with ε_x = +1.5 %.
+- Along y, 3 MXene cells (16.129 Å) match 4 Au cells, with ε_y = −1.1 %.
+
+The *Box* panel in the web app and `outputs.json → match` report m, n, the box length and ε for each direction.
 
 ## Run
 

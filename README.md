@@ -1,4 +1,4 @@
-# MXene/metal interface builder
+# Coherent MXene/metal interface builder
 
 Builds an MXene/metal interface in one orthogonal box, relaxes it with a MACE machine-learned potential and compares the built and relaxed structures. It runs as a web app with a 3D viewer, or from the command line.
 
@@ -44,9 +44,9 @@ The *Box* panel in the web app and `outputs.json → match` report m, n, the box
 With Podman (the image includes CPU PyTorch and the MACE-MH-1 weights):
 
 ```bash
-podman build -t mxbuilder:2.1.0 .
-podman run --rm -p 8000:8000 mxbuilder:2.1.0          # open http://localhost:8000
-podman run --rm -p 8000:8000 -v "$PWD/data:/app/data:Z" mxbuilder:2.1.0   # use your own copy of the spreadsheet
+podman build -t coherent-interface-builder:2.1.0 .
+podman run --rm -p 8000:8000 coherent-interface-builder:2.1.0          # open http://localhost:8000
+podman run --rm -p 8000:8000 -v "$PWD/data:/app/data:Z" coherent-interface-builder:2.1.0   # use your own copy of the spreadsheet
 ```
 
 Without the container (Python 3.11 or newer):

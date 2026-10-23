@@ -1,3 +1,5 @@
 #!/bin/sh
-# nanoHUB launcher: opens the SimTool notebook in Jupyter.
-/usr/bin/invoke_app "$@" -C "start_jupyter -T @tool simtool/coherentmxmetal.ipynb" -u anaconda-7 -w headless
+# nanoHUB launcher: opens the SimTool notebook in Jupyter. The notebook runs in the torchsim kernel of anaconda-7.
+/usr/bin/invoke_app "$@" -C "start_jupyter -T @tool simtool/coherentmxmetal.ipynb" \
+-t coherentmxmetal \
+-u anaconda-7

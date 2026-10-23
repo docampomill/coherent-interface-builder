@@ -29,6 +29,8 @@ DEFAULTS = dict(
     work_of_adhesion=False,    # from the rigidly separated MXene and metal
 )
 HEADS = {"omat_pbe": "PBE(+U)", "oc20_usemppbe": "PBE slabs", "matpes_r2scan": "r²SCAN"}
+MH_URLS = {name: f"https://github.com/ACEsuit/mace-foundations/releases/download/mace_mh_1/mace-{name}.model"
+           for name in ("mh-0", "mh-1")}                # for mace-torch versions that do not know the MH names
 IN_PLANE = [True, True, False, False, False, True]     # FrechetCellFilter mask: a, b, γ relax; c fixed
 EV_PER_A2_TO_J_PER_M2 = 16.021766
 
@@ -37,7 +39,9 @@ EV_PER_A2_TO_J_PER_M2 = 16.021766
 def calculator(model, head, dispersion):
     """MACE in float64. D3(BJ) is added here, not through mace_mp, which would pass `head` to D3 too."""
     from mace.calculators import mace_mp
-    calc = mace_mp(model=model, device="cpu", default_dtype="float64", **({"head": head} if model.startswith("mh") else {}))
+    from mace.calculators.foundations_models import mace_mp_names
+    source = MH_URLS[model] if model in MH_URLS and model not in mace_mp_names else model   # mace-torch < 0.3.16
+    calc = mace_mp(model=source, device="cpu", default_dtype="float64", **({"head": head} if model.startswith("mh") else {}))
     if not dispersion:
         return calc
     import torch

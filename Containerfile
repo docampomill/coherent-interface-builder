@@ -1,7 +1,7 @@
 # MXene/metal interface builder + MACE relaxation on CPU
-#   podman build -t mxbuilder:0.8.0 .
-#   podman run --rm -p 8000:8000 mxbuilder:0.8.0
-#   podman run --rm -p 8000:8000 -v "$PWD/data:/app/data:Z" mxbuilder:0.8.0   # use your edited spreadsheet
+#   podman build -t mxbuilder:2.1.0 .
+#   podman run --rm -p 8000:8000 mxbuilder:2.1.0
+#   podman run --rm -p 8000:8000 -v "$PWD/data:/app/data:Z" mxbuilder:2.1.0   # use your edited spreadsheet
 FROM docker.io/library/python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

@@ -57,6 +57,7 @@ function collectInputs() {
   return {
     mxene: $("mxene").value,
     stacking: radio("stacking"),
+    mxene_rotation: Number(radio("mxene_rotation")),
     vacuum: num("vacuum", d.vacuum),
     metal: $("metal").value,
     metal_layers: num("metal_layers", d.metal_layers),
@@ -81,6 +82,7 @@ function applyInputs(given) {
   const p = { ...OPTIONS.defaults, ...given };
   $("mxene").value = p.mxene;
   document.querySelector(`input[name=stacking][value=${p.stacking}]`).checked = true;
+  document.querySelector(`input[name=mxene_rotation][value="${p.mxene_rotation}"]`).checked = true;
   $("metal").value = p.metal;
   $("metal_site").value = p.metal_site;
   $("metal_stacking").value = p.metal_stacking;

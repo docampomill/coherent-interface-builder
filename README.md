@@ -4,7 +4,7 @@ Builds an MXene/metal interface in one orthogonal box, relaxes it with a MACE ma
 
 ## What it does
 
-1. **MXene.** Ordered MXene (e.g. Ti₃C₂O₂, Mo₂TiC₂O₂) in its conventional a × √3a × c cell, with AβC (octahedral) or AβA (trigonal prismatic) stacking. Vacuum is only below the MXene, so its top layer is at z = c.
+1. **MXene.** Ordered MXene (e.g. Ti₃C₂O₂, Mo₂TiC₂O₂) in its conventional a × √3a × c cell, with AβC (octahedral) or AβA (trigonal prismatic) stacking, optionally turned 180° about z. Vacuum is only below the MXene, so its top layer is at z = c.
 2. **Metal.** Conventional cubic cell built from its space group: FCC `Fm-3m` (4a), or L1₂ `Pm-3m` (B at 1a, A at 3c). It is then turned so that [111] is along z: a stack of close-packed (111) layers, d₁₁₁ = a_cubic/√3 apart, in the same a × √3a form as the MXene with a → a₁₁₁ (a₁₁₁ × √3a₁₁₁ for FCC, 2a₁₁₁ × 2√3a₁₁₁ for L1₂, whose B atoms form a 2 × 2 superlattice in each layer).
 3. **Supercell.** Along x and along y, the tool finds the smallest whole number of MXene replicas that matches a whole number of metal replicas within the strain tolerance. The metal takes the strain (see [Supercell matching](#supercell-matching)).
 4. **Placement.** Metal (111) on MXene (0001), metal [1-10] along x, layer by layer: the first metal (111) plane sits at a set gap above the top MXene layer, on site A, B or C of the MXene grid, and the metal layers then follow A → B → C (or its twin). An optional in-plane shift moves the metal off the site.
@@ -17,8 +17,9 @@ Lattice constants come from `data/MXene_FCC_L12_strain_matrix.xlsx` (41 ordered 
 Fixed geometry rules for the starting structure:
 - M–X layer spacing is 0.385 a.
 - The O height comes from a 2.0 Å M–O bond.
-- AβC puts the central layer on A. AβA puts the metals on A and C/N on B.
+- Sites are counted from the bottom MXene layer, which is on A. AβC cycles A → B → C upward; AβA puts the metals on A and C/N on B.
 - O sits on the site that neither of its two nearest layers uses.
+- `mxene_rotation` = 180 turns the MXene 180° about z. A stays and B ↔ C swap, so AβC becomes AγB (A C B from the bottom) and the C layer moves from the right of A to its left.
 - With `metal_site` = `auto`, the first metal layer takes the same rule: the site free of the top two MXene layers, so the close-packed stacking carries on into the metal.
 
 ## Supercell matching
@@ -43,9 +44,9 @@ The *Box* panel in the web app and `outputs.json → match` report m, n, the box
 With Podman (the image includes CPU PyTorch and the MACE-MH-1 weights):
 
 ```bash
-podman build -t mxbuilder:0.8.0 .
-podman run --rm -p 8000:8000 mxbuilder:0.8.0          # open http://localhost:8000
-podman run --rm -p 8000:8000 -v "$PWD/data:/app/data:Z" mxbuilder:0.8.0   # use your own copy of the spreadsheet
+podman build -t mxbuilder:2.1.0 .
+podman run --rm -p 8000:8000 mxbuilder:2.1.0          # open http://localhost:8000
+podman run --rm -p 8000:8000 -v "$PWD/data:/app/data:Z" mxbuilder:2.1.0   # use your own copy of the spreadsheet
 ```
 
 Without the container (Python 3.11 or newer):
@@ -71,18 +72,19 @@ python relax.py inputs.json       # build and relax: adds POSCAR_relaxed and the
 |---|---|---|
 | `mxene` | `V2C` | Formula, a row of the MXenes sheet |
 | `stacking` | `ABC` | `ABC` = AβC (octahedral), `ABA` = AβA (trigonal prismatic) |
+| `mxene_rotation` | 0 | degrees about z, `0` or `180` (B ↔ C) |
 | `vacuum` | 20.0 | Å, below the MXene only |
 | `metal` | `Au` | Symbol, a row of the Metals sheet |
 | `metal_layers` | 4 | metal (111) atomic planes |
-| `metal_site` | `auto` | site of the first metal layer on the MXene grid: `A`, `B`, `C`, or `auto` (free of the top two MXene layers) |
-| `metal_stacking` | `ABC` | `ABC` continues the MXene's A → B → C sense upward, `ACB` is the twin |
+| `metal_site` | `auto` | site of the first metal layer on the MXene grid: `A` (in-plane position of the bottom MXene layer), `B`, `C`, or `auto` (free of the top two MXene layers) |
+| `metal_stacking` | `ABC` | `ABC` climbs A → B → C (continues an MXene at 0°), `ACB` climbs A → C → B (continues one at 180°) |
 | `gap` | 2.3 | Å, top MXene layer to first metal (111) layer |
 | `shift` | [0, 0] | Å, in-plane shift of the metal along x, y, from its site |
 | `tol` | 0.02 | largest \|strain\| on the metal along x and y |
 | `max_replicas` | 10 | largest number of MXene replicas tried per direction |
 | `model` | `mh-1` | MACE foundation model |
 | `head` | `omat_pbe` | output head of the MH models: `omat_pbe` (PBE(+U)), `oc20_usemppbe` (PBE slabs), `matpes_r2scan` (r²SCAN) |
-| `dispersion` | true | add D3(BJ) |
+| `dispersion` | false | add D3(BJ) |
 | `fmax` | 0.01 | eV/Å, force convergence |
 | `max_steps` | 500 | FIRE steps |
 | `fixed_layers` | 2 | outermost metal layers held fixed |
@@ -132,7 +134,7 @@ Displacements are Cartesian, using the minimum image in-plane. When the in-plane
 
 ## Atomic planes
 
-(hkl) refer to the MXene a × √3a × c cell or to the metal's strained cubic cell, whose [111] is along z, so metal (111) planes are the horizontal layers. The MXene c includes the vacuum, so MXene planes with l ≠ 0 tilt with it.
+(hkl) refer to the MXene a × √3a × c cell (turned with the MXene, so at 180° its a and b point along −x and −y) or to the metal's strained cubic cell, whose [111] is along z, so metal (111) planes are the horizontal layers. The MXene c includes the vacuum, so MXene planes with l ≠ 0 tilt with it.
 
 ## Files
 

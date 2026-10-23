@@ -66,6 +66,27 @@ python relax.py inputs.json       # build and relax: adds POSCAR_relaxed and the
 
 `inputs.json` holds only the inputs you want to change; everything else takes its default. Without a file, both scripts use the defaults. The web app can save `inputs.json`. It can also load `inputs.json`, or an `outputs.json` to restore that run's inputs.
 
+## nanoHUB SimTool
+
+`simtool/coherentmxmetal.ipynb` is the same workflow as a nanoHUB [SimTool](https://simtool.readthedocs.io/) (Sim2L): a notebook that declares its inputs and outputs in YAML, checks the inputs, and saves the outputs to nanoHUB's results database. Runs with the same inputs come from the cache.
+
+- **Inputs:** the inputs above, with `shift` split into `shift_x` and `shift_y`, plus `run_relaxation` (off by default: build only). Lengths take units, e.g. `gap = "0.25 nm"`.
+- **Outputs:** `formula`, `n_atoms`, `box`, `strain_x`, `strain_y`, `match`, the POSCARs as text, and after a relaxation `energy`, `gap_relaxed` and `work_of_adhesion` (empty otherwise). `summary` holds everything in `outputs.json`.
+- `simtool/builder.py` and `simtool/relax.py` are links to the top-level files. The notebook lists them as `EXTRA_FILES`, so each run gets them, and `builder.py` finds the spreadsheet through the link.
+- `middleware/invoke` opens the notebook in a nanoHUB Jupyter session.
+- The MXene and metal option lists in the notebook are the spreadsheet rows. Update them if you add rows.
+
+Besides `requirements.txt` (without Flask and gunicorn), the SimTool needs `simtool`, `papermill` and `yamlmagic`. To test it locally, from the repository root:
+
+```python
+from simtool import searchForSimTool, getSimToolInputs, Run
+loc = searchForSimTool("coherentmxmetal")
+inputs = getSimToolInputs(loc)
+inputs.gap.value = "0.25 nm"
+r = Run(loc, inputs)            # writes RUNS/<id>/
+r.read("POSCAR"), r.read("strain_x")
+```
+
 ## Inputs (`inputs.json`)
 
 | Name | Default | Meaning |
@@ -146,3 +167,5 @@ Displacements are Cartesian, using the minimum image in-plane. When the in-plane
 | `app.py` | Flask app |
 | `templates/`, `static/` | page, styles, script and bundled 3Dmol.js |
 | `data/` | lattice-constant spreadsheet |
+| `simtool/` | nanoHUB SimTool notebook (`coherentmxmetal.ipynb`) |
+| `middleware/invoke` | nanoHUB launcher |

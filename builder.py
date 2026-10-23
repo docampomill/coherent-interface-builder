@@ -14,7 +14,7 @@ import openpyxl
 from pymatgen.core import Element, Lattice, Structure
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 
-SPREADSHEET = Path(__file__).parent / "data" / "MXene_FCC_L12_strain_matrix.xlsx"
+SPREADSHEET = Path(__file__).resolve().parent / "data" / "MXene_FCC_L12_strain_matrix.xlsx"
 
 DEFAULTS = dict(
     mxene="V2C",         # MXenes sheet, Formula

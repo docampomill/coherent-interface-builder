@@ -73,7 +73,8 @@ python relax.py inputs.json       # build and relax: adds POSCAR_relaxed and the
 - **Inputs:** the inputs above, with `shift` split into `shift_x` and `shift_y`, plus `run_relaxation` (off by default: build only). Lengths take units, e.g. `gap = "0.25 nm"`.
 - **Outputs:** `formula`, `n_atoms`, `box`, `strain_x`, `strain_y`, `match`, the POSCARs as text, and after a relaxation `energy`, `gap_relaxed` and `work_of_adhesion` (empty otherwise). `summary` holds everything in `outputs.json`.
 - `simtool/builder.py` and `simtool/relax.py` are links to the top-level files. The notebook lists them as `EXTRA_FILES`, so each run gets them, and `builder.py` finds the spreadsheet through the link.
-- `middleware/invoke` opens the notebook in a nanoHUB Jupyter session with `anaconda-7`. The notebook runs in that module's `torchsim` kernel (Python 3.12, torch 2.8, mace-torch 0.3.14, pymatgen 2025.10, ase 3.27), which also needs `simtool`, `papermill` and `yamlmagic`. mace-torch 0.3.14 does not know the name `mh-1`, so `relax.py` then loads MACE-MH-1 from its download URL.
+- `bin/coherentmxmetalExample.ipynb` is the landing page that nanoHUB opens: it sets the inputs, runs the Sim2L with `simtool.Run`, and shows the match, a side and top view and the POSCARs. It runs in `anaconda-7`'s `python3` kernel, which has `simtool` and `papermill`.
+- `middleware/invoke` (nanoHUB's Sim2L template) opens the landing page in a nanoHUB Jupyter session with `anaconda-7`. The Sim2L notebook itself runs in that module's `torchsim` kernel (Python 3.12, torch 2.8, mace-torch 0.3.14, pymatgen 2025.10, ase 3.27), which also needs `simtool`, `papermill` and `yamlmagic`. mace-torch 0.3.14 does not know the name `mh-1`, so `relax.py` then loads MACE-MH-1 from its download URL.
 - The MXene and metal option lists in the notebook are the spreadsheet rows. Update them if you add rows.
 
 Besides `requirements.txt` (without Flask and gunicorn), the SimTool needs `simtool`, `papermill` and `yamlmagic`. To test it locally, from the repository root:
@@ -168,4 +169,6 @@ Displacements are Cartesian, using the minimum image in-plane. When the in-plane
 | `templates/`, `static/` | page, styles, script and bundled 3Dmol.js |
 | `data/` | lattice-constant spreadsheet |
 | `simtool/` | nanoHUB SimTool notebook (`coherentmxmetal.ipynb`) |
+| `bin/coherentmxmetalExample.ipynb` | nanoHUB landing page |
 | `middleware/invoke` | nanoHUB launcher |
+| `src/Makefile`, `doc/`, `examples/` | nanoHUB tool layout (nothing to compile) |

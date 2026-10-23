@@ -4,3 +4,5 @@ runs/
 *.pyc
 .DS_Store
 RUNS/
+notebooks/RUNS/
+notebooks/POSCAR*

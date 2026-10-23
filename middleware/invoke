@@ -1,10 +1,9 @@
 #!/bin/sh
 #
-# Sim2L: opens the landing page notebooks/landing_page.ipynb, which runs simtool/coherentmxmetal.ipynb
-# (torchsim kernel of anaconda-7).
+# simtool: opens landing_page.ipynb (top level), which links to bin/workflow.ipynb and simtool/coherentmxmetal.ipynb
 #
 /usr/bin/invoke_app "$@" -t coherentmxmetal \
-                         -C "start_jupyter -t -T @tool/notebooks landing_page.ipynb" \
+                         -C "start_jupyter -t -T @tool landing_page.ipynb" \
                          -u anaconda-7 \
-                         -r none \
-                         -w headless
+                         -w headless \
+                         -r none

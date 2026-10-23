@@ -19,11 +19,12 @@ SPREADSHEET = Path(__file__).parent / "data" / "MXene_FCC_L12_strain_matrix.xlsx
 DEFAULTS = dict(
     mxene="V2C",         # MXenes sheet, Formula
     stacking="ABC",      # ABC = AβC (octahedral), ABA = AβA (trigonal prismatic)
+    mxene_rotation=0,    # degrees about z: 0, or 180 to turn the MXene over in-plane (B ↔ C, AβC → AγB)
     vacuum=20.0,         # Å, below the MXene only
     metal="Au",          # Metals sheet, Symbol
     metal_layers=4,      # metal (111) atomic planes
     metal_site="auto",   # A, B or C site of the first metal (111) layer; auto = the one free of the top two MXene layers
-    metal_stacking="ABC",  # ABC continues the MXene's A → B → C sense upward; ACB is its twin
+    metal_stacking="ABC",  # A → B → C upward (continues an MXene at 0°); ACB = A → C → B (continues one at 180°)
     gap=2.3,             # Å, top MXene layer to first metal layer
     shift=[0.0, 0.0],    # Å, in-plane shift of the metal along x and y
     tol=0.02,            # largest |strain| allowed on the metal along x and along y
@@ -92,14 +93,17 @@ def build(inputs):
         raise ValueError(f"{p['mxene']} or {p['metal']} is not a row of {SPREADSHEET.name}")
     if p["metal_site"] not in ("auto", *SITES) or p["metal_stacking"] not in NEXT:
         raise ValueError("metal_site is auto, A, B or C; metal_stacking is ABC or ACB")
+    if p["mxene_rotation"] not in (0, 180):
+        raise ValueError("mxene_rotation is 0 or 180")
 
     # ---------------- MXene: conventional (orthogonal) cell, vacuum only below ----------------
     row = MXENES[p["mxene"]]
     a, vac = row["a"], p["vacuum"]
     layers = mxene_layers(row["formula"])
 
-    # AβC: sites cycle A → B → C with the central layer on A; AβA: metals on A, C/N on B.
-    # O sits on the site free of its two nearest layers.
+    # AβC: sites cycle A → B → C; AβA: metals on one site, C/N on the next. O sits on the site free of its two
+    # nearest layers. Labels are then shifted (a rigid in-plane translation) so the bottom layer is on A.
+    # Turning the MXene 180° about z keeps A and swaps B ↔ C: (0, 1/3) → (0, -1/3) ≡ (1/2, 1/6).
     core = [i for i, e in enumerate(layers) if e != "O"]
     centre = (core[0] + core[-1]) // 2
     sites = [None if e == "O" else "ABC"[(i - centre) % 3] if p["stacking"] == "ABC" else "B" if e in ("C", "N") else "A"
@@ -108,6 +112,10 @@ def build(inputs):
         sites[0] = ({"A", "B", "C"} - {sites[1], sites[2]}).pop()
     if layers[-1] == "O":
         sites[-1] = ({"A", "B", "C"} - {sites[-2], sites[-3]}).pop()
+    k = "ABC".index(sites[0])
+    sites = ["ABC"[("ABC".index(s) - k) % 3] for s in sites]
+    if p["mxene_rotation"] == 180:
+        sites = [{"A": "A", "B": "C", "C": "B"}[s] for s in sites]
 
     heights = [0.0]                                    # above the bottom layer, Å
     for lower, upper in zip(layers, layers[1:]):
@@ -224,6 +232,7 @@ def build(inputs):
                           species={e: names.count(e) for e in dict.fromkeys(names)}, z=round(float(z[on].mean()), 4)))
 
     r = lambda v, n=4: round(float(v), n)
+    turn = -1 if p["mxene_rotation"] == 180 else 1                         # the MXene's a and b turn with it
     # Cubic cell vectors in the interface frame (rows), strained like the metal: (hkl) in the viewer stay cubic.
     rotation = np.array(ORIENT, dtype=float) / np.linalg.norm(ORIENT, axis=1)[:, None]
     if mirror:
@@ -232,7 +241,9 @@ def build(inputs):
     strained_matrix = a_m * rotation.T * strain
     outputs = dict(
         inputs=p,
-        mxene=dict(**row, stacking=p["stacking"], layers=layers, sites=sites, cell=[r(a), r(np.sqrt(3) * a), r(c)],
+        mxene=dict(**row, stacking=p["stacking"], rotation=p["mxene_rotation"], layers=layers, sites=sites,
+                   cell=[r(a), r(np.sqrt(3) * a), r(c)],
+                   matrix=(np.diag([turn * a, turn * np.sqrt(3) * a, c]).round(4) + 0.0).tolist(),  # cell vectors, interface frame
                    thickness=r(heights[-1])),
         metal=dict(**metal_row, space_group=f"{symbol} ({number})", layers=n_layers, d111=r(d111),
                    orientation="(111) ∥ MXene (0001), [1-10] ∥ x, [11-2] ∥ y", stacking=p["metal_stacking"],

@@ -21,7 +21,7 @@ import builder
 DEFAULTS = dict(
     model="mh-1",              # MACE foundation model
     head="omat_pbe",           # output head of the MH models
-    dispersion=True,           # add D3(BJ)
+    dispersion=False,          # add D3(BJ)
     fmax=0.01,                 # eV/Å
     max_steps=500,             # FIRE steps
     fixed_layers=2,            # outermost metal layers held fixed

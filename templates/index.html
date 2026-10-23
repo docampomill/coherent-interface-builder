@@ -43,6 +43,11 @@
         <label><input type="radio" name="stacking" value="ABC" checked><span>A<i>β</i>C</span><small>octahedral</small></label>
         <label><input type="radio" name="stacking" value="ABA"><span>A<i>β</i>A</span><small>trigonal prismatic</small></label>
       </fieldset>
+      <fieldset class="seg">
+        <legend>Orientation about z</legend>
+        <label><input type="radio" name="mxene_rotation" value="0" checked><span>0°</span><small>C right of A</small></label>
+        <label><input type="radio" name="mxene_rotation" value="180"><span>180°</span><small>B ↔ C, C left of A</small></label>
+      </fieldset>
       <p class="hint" id="mxeneSource"></p>
     </section>
 
@@ -64,13 +69,13 @@
         <label>First layer site
           <select id="metal_site">
             <option value="auto">auto · free of the top two MXene layers</option>
-            <option value="A">A</option><option value="B">B</option><option value="C">C</option>
+            <option value="A">A · over the bottom MXene layer</option><option value="B">B</option><option value="C">C</option>
           </select>
         </label>
         <label>Stacking
           <select id="metal_stacking">
-            <option value="ABC">A → B → C · continues the MXene</option>
-            <option value="ACB">A → C → B · twin</option>
+            <option value="ABC">A → B → C · continues an MXene at 0°</option>
+            <option value="ACB">A → C → B · continues an MXene at 180°</option>
           </select>
         </label>
       </div>

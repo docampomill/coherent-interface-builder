@@ -74,6 +74,7 @@ python relax.py inputs.json       # build and relax: adds POSCAR_relaxed and the
 - **Outputs:** `formula`, `n_atoms`, `box`, `strain_x`, `strain_y`, `match`, the POSCARs as text, and after a relaxation `energy`, `gap_relaxed` and `work_of_adhesion` (empty otherwise). `summary` holds everything in `outputs.json`.
 - `simtool/builder.py` and `simtool/relax.py` are links to the top-level files. The notebook lists them and `sim2l.py` as `EXTRA_FILES`, so each run gets them, and `builder.py` finds the spreadsheet through the link.
 - `landing_page.ipynb` is the page nanoHUB opens: abstract, links and references.
+- `bin/interactive.ipynb` is a form like the web app (ipywidgets): menus for the MXene, metal and placement, a rebuild after each change, a Relax button, the structure views, tables and POSCAR downloads. Every build runs the Sim2L.
 - `bin/workflow.ipynb` sets the inputs, runs the Sim2L with `simtool.Run`, and shows the match, a side and top view and the POSCARs. It runs in `anaconda-7`'s `python3` kernel, which has `simtool` and `papermill`.
 - `middleware/invoke` (nanoHUB's Sim2L template) opens the landing page in a nanoHUB Jupyter session with `anaconda-7`. The Sim2L notebook itself runs in that module's `torchsim` kernel (Python 3.12, torch 2.8, mace-torch 0.3.14, pymatgen 2025.10, ase 3.27). That kernel has neither `simtool` nor `yamlmagic`, so `simtool/sim2l.py` stands in for them there (it uses them when they are installed); the caller's `simtool` reads the outputs as usual. mace-torch 0.3.14 does not know the name `mh-1`, so `relax.py` then loads MACE-MH-1 from its download URL.
 - The MXene and metal option lists in the notebook are the spreadsheet rows. Update them if you add rows.
@@ -171,6 +172,7 @@ Displacements are Cartesian, using the minimum image in-plane. When the in-plane
 | `data/` | lattice-constant spreadsheet |
 | `simtool/` | nanoHUB SimTool notebook (`coherentmxmetal.ipynb`) |
 | `landing_page.ipynb` | nanoHUB landing page |
+| `bin/interactive.ipynb` | form on nanoHUB, like the web app, that runs the Sim2L |
 | `bin/workflow.ipynb` | runs the Sim2L on nanoHUB |
 | `middleware/invoke` | nanoHUB launcher |
 | `src/Makefile`, `doc/`, `examples/` | nanoHUB tool layout (nothing to compile) |

@@ -6,3 +6,4 @@ runs/
 RUNS/
 bin/RUNS/
 bin/POSCAR*
+bin/outputs.json

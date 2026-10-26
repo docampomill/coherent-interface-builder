@@ -173,6 +173,7 @@ Displacements are Cartesian, using the minimum image in-plane. When the in-plane
 | `simtool/` | nanoHUB SimTool notebook (`coherentmxmetal.ipynb`) |
 | `landing_page.ipynb` | nanoHUB landing page |
 | `bin/interactive.ipynb` | form on nanoHUB, like the web app, that runs the Sim2L |
+| `bin/interactive_ui.py` | the form's code (ipywidgets); the notebook cell only calls `app()` |
 | `bin/workflow.ipynb` | runs the Sim2L on nanoHUB |
 | `middleware/invoke` | nanoHUB launcher |
 | `src/Makefile`, `doc/`, `examples/` | nanoHUB tool layout (nothing to compile) |

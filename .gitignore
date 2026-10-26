@@ -7,3 +7,4 @@ RUNS/
 bin/RUNS/
 bin/POSCAR*
 bin/outputs.json
+.ipynb_checkpoints/

@@ -27,8 +27,8 @@ DEFAULTS = dict(
     metal_stacking="ABC",  # A → B → C upward (continues an MXene at 0°); ACB = A → C → B (continues one at 180°)
     gap=2.3,             # Å, top MXene layer to first metal layer
     shift=[0.0, 0.0],    # Å, in-plane shift of the metal along x and y
-    tol=0.02,            # largest |strain| allowed on the metal along x and along y
-    max_replicas=10,     # largest number of MXene replicas tried per direction
+    tol=0.02,            # largest |strain| allowed on the MXene along x and along y
+    max_replicas=10,     # largest number of metal replicas tried per direction
 )
 
 SITES = {"A": (0, 0), "B": (0, 1 / 3), "C": (1 / 2, 1 / 6)}    # hexagonal A, B, C sites in the a × √3a cell
@@ -174,11 +174,12 @@ def build(inputs):
         assert site_of(f[0] * net, f[1] * net) == ["A", nxt["A"], nxt[nxt["A"]]][round(f[2] * 3) % 3]
 
     # ---------------- In-plane replicas giving (approximately) the same box ----------------
-    replicas = []                                      # per direction: (MXene replicas, metal replicas, strain on metal)
+    # The metal is the substrate: the box is a whole number of metal cells and the MXene takes the strain.
+    replicas = []                                      # per direction: (MXene replicas, metal replicas, strain on MXene)
     for L_mx, L_m in zip(mxene.lattice.abc[:2], oriented.lattice.abc[:2]):
-        for m in range(1, p["max_replicas"] + 1):
-            n = max(1, round(m * L_mx / L_m))
-            strain = m * L_mx / (n * L_m) - 1
+        for n in range(1, p["max_replicas"] + 1):
+            m = max(1, round(n * L_m / L_mx))
+            strain = n * L_m / (m * L_mx) - 1
             if abs(strain) <= p["tol"]:
                 replicas.append((m, n, strain))
                 break
@@ -196,22 +197,23 @@ def build(inputs):
     metal_super.make_supercell([m_x, m_y, math.ceil(n_layers / 3)])       # three (111) planes per oriented cell
     metal_super.remove_sites([k for k, s in enumerate(metal_super) if s.coords[2] > (n_layers - 1) * d111 + 1e-3])
 
-    box_x, box_y = mx_x * mxene.lattice.a, mx_y * mxene.lattice.b
+    box_x, box_y = m_x * oriented.lattice.a, m_y * oriented.lattice.b
+    a_s, b_s = box_x / mx_x, box_y / mx_y              # strained MXene cell; its layer heights stay unstrained
     z_top = c + gap + metal_super.cart_coords[:, 2].max()                  # vacuum only below the MXene
     interface_lattice = Lattice.orthorhombic(box_x, box_y, z_top)
 
     species, coords, layer, part = [], [], [], []
     for i in range(mx_x):                              # MXene replicas, copied by hand: make_supercell
         for j in range(mx_y):                          # would wrap the top layer from z = c to z = 0
-            for s in mxene:
+            for s in mxene:                            # same fractional x, y in the strained cell = strained MXene
                 species.append(s.species_string)
-                coords.append(s.coords + [i * mxene.lattice.a, j * mxene.lattice.b, 0])
+                coords.append([(i + s.frac_coords[0]) * a_s, (j + s.frac_coords[1]) * b_s, s.coords[2]])
                 layer.append(s.properties["layer"])
                 part.append("mxene")
 
     # Bottom metal layer is on A at the origin; move it to the first site of the MXene grid, then add the shift.
-    offset = np.array(SITES[first]) * [a, np.sqrt(3) * a] + shift
-    for s in metal_super:                              # same fractional x, y in the matched box = strained metal
+    offset = np.array(SITES[first]) * [a_s, b_s] + shift
+    for s in metal_super:                              # the box is whole metal cells: the metal keeps its lattice
         species.append(s.species_string)
         x = (s.frac_coords[0] + offset[0] / box_x) % 1 * box_x
         y = (s.frac_coords[1] + offset[1] / box_y) % 1 * box_y
@@ -233,23 +235,20 @@ def build(inputs):
 
     r = lambda v, n=4: round(float(v), n)
     turn = -1 if p["mxene_rotation"] == 180 else 1                         # the MXene's a and b turn with it
-    # Cubic cell vectors in the interface frame (rows), strained like the metal: (hkl) in the viewer stay cubic.
+    # Cubic cell vectors in the interface frame (rows), for the (hkl) of the viewer.
     rotation = np.array(ORIENT, dtype=float) / np.linalg.norm(ORIENT, axis=1)[:, None]
     if mirror:
         rotation[1] *= -1
-    strain = [box_x / (m_x * oriented.lattice.a), box_y / (m_y * oriented.lattice.b), 1.0]
-    strained_matrix = a_m * rotation.T * strain
     outputs = dict(
         inputs=p,
         mxene=dict(**row, stacking=p["stacking"], rotation=p["mxene_rotation"], layers=layers, sites=sites,
-                   cell=[r(a), r(np.sqrt(3) * a), r(c)],
-                   matrix=(np.diag([turn * a, turn * np.sqrt(3) * a, c]).round(4) + 0.0).tolist(),  # cell vectors, interface frame
+                   cell=[r(a), r(np.sqrt(3) * a), r(c)], strained_cell=[r(a_s), r(b_s), r(c)],
+                   matrix=(np.diag([turn * a_s, turn * b_s, c]).round(4) + 0.0).tolist(),  # strained cell vectors, interface frame
                    thickness=r(heights[-1])),
         metal=dict(**metal_row, space_group=f"{symbol} ({number})", layers=n_layers, d111=r(d111),
                    orientation="(111) ∥ MXene (0001), [1-10] ∥ x, [11-2] ∥ y", stacking=p["metal_stacking"],
                    sites=metal_sites, cell=[r(v) for v in oriented.lattice.abc],
-                   strained_cell=[r(box_x / m_x), r(box_y / m_y), r(3 * d111)],
-                   strained_matrix=np.round(strained_matrix + 0.0, 6).tolist()),
+                   matrix=np.round(a_m * rotation.T + 0.0, 6).tolist()),         # cubic cell vectors, interface frame
         match=dict(x=dict(mxene=mx_x, metal=m_x, length=r(box_x), strain=r(eps_x, 6)),
                    y=dict(mxene=mx_y, metal=m_y, length=r(box_y), strain=r(eps_y, 6))),
         interface=dict(formula=interface.composition.formula, n_atoms=len(interface), box=[r(box_x), r(box_y), r(z_top)],

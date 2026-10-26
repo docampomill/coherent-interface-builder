@@ -89,18 +89,18 @@
         <label>Shift x (Å) <input id="shift_x" type="number" step="0.1"></label>
         <label>Shift y (Å) <input id="shift_y" type="number" step="0.1"></label>
         <label>Strain tolerance <input id="tol" type="number" step="0.005" min="0.001" max="0.2"></label>
-        <label>Max replicas <input id="max_replicas" type="number" step="1" min="1" max="30"></label>
+        <label>Max metal replicas <input id="max_replicas" type="number" step="1" min="1" max="30"></label>
         <label>Vacuum below (Å) <input id="vacuum" type="number" step="0.5" min="0"></label>
       </div>
-      <p class="hint">Metal (111) on MXene (0001), metal [1-10] along x. The gap is from the top MXene layer to the first metal (111) plane; the shift moves the metal from its site. The metal takes the in-plane strain.</p>
+      <p class="hint">Metal (111) on MXene (0001), metal [1-10] along x. The gap is from the top MXene layer to the first metal (111) plane; the shift moves the metal from its site. The metal is the substrate and keeps its lattice; the MXene takes the in-plane strain.</p>
     </section>
 
     <section>
       <h2><span class="step">4</span>Atomic planes</h2>
       <fieldset class="seg">
         <legend>(hkl) in the cell of</legend>
-        <label><input type="radio" name="plane_part" value="mxene" checked><span>MXene</span><small>a × √3a × c</small></label>
-        <label><input type="radio" name="plane_part" value="metal"><span>Metal</span><small>cubic, strained; [111] ∥ z</small></label>
+        <label><input type="radio" name="plane_part" value="mxene" checked><span>MXene</span><small>a × √3a × c, strained</small></label>
+        <label><input type="radio" name="plane_part" value="metal"><span>Metal</span><small>cubic; [111] ∥ z</small></label>
       </fieldset>
       <div class="grid3">
         <label>h <input id="ph" type="number" step="1" value="0"></label>
@@ -199,7 +199,7 @@
       <h2>Box</h2>
       <div class="scroll">
         <table>
-          <thead><tr><th></th><th class="num">MXene replicas</th><th class="num">Metal replicas</th><th class="num">Box (Å)</th><th class="num">Metal strain</th></tr></thead>
+          <thead><tr><th></th><th class="num">MXene replicas</th><th class="num">Metal replicas</th><th class="num">Box (Å)</th><th class="num">MXene strain</th></tr></thead>
           <tbody id="matchBody"></tbody>
         </table>
       </div>

@@ -6,11 +6,11 @@ Builds an MXene/metal interface in one orthogonal box, relaxes it with a MACE ma
 
 1. **MXene.** Ordered MXene (e.g. Ti₃C₂O₂, Mo₂TiC₂O₂) in its conventional a × √3a × c cell, with AβC (octahedral) or AβA (trigonal prismatic) stacking, optionally turned 180° about z. Vacuum is only below the MXene, so its top layer is at z = c.
 2. **Metal.** Conventional cubic cell built from its space group: FCC `Fm-3m` (4a), or L1₂ `Pm-3m` (B at 1a, A at 3c). It is then turned so that [111] is along z: a stack of close-packed (111) layers, d₁₁₁ = a_cubic/√3 apart, in the same a × √3a form as the MXene with a → a₁₁₁ (a₁₁₁ × √3a₁₁₁ for FCC, 2a₁₁₁ × 2√3a₁₁₁ for L1₂, whose B atoms form a 2 × 2 superlattice in each layer).
-3. **Supercell.** Along x and along y, the tool finds the smallest whole number of MXene replicas that matches a whole number of metal replicas within the strain tolerance. The metal takes the strain (see [Supercell matching](#supercell-matching)).
+3. **Supercell.** The metal is the substrate and the MXene is added on it. Along x and along y, the tool finds the smallest whole number of metal replicas that matches a whole number of MXene replicas within the strain tolerance. The metal keeps its lattice constant and the MXene takes the strain (see [Supercell matching](#supercell-matching)).
 4. **Placement.** Metal (111) on MXene (0001), metal [1-10] along x, layer by layer: the first metal (111) plane sits at a set gap above the top MXene layer, on site A, B or C of the MXene grid, and the metal layers then follow A → B → C (or its twin). An optional in-plane shift moves the metal off the site.
 5. **Relaxation.** MACE (default MACE-MH-1, `omat_pbe` head) in float64, optional D3(BJ) dispersion and FIRE. The outermost metal layers are held fixed, and the in-plane cell can relax too. Optionally reports the work of adhesion.
 6. **Built vs relaxed.** Per-atom displacements, layer heights and spacings, the gap, the MXene thickness and the cell, before and after relaxation (see below).
-7. **Atomic planes.** Shows the (hkl) planes of the MXene cell or of the strained metal cell in the viewer.
+7. **Atomic planes.** Shows the (hkl) planes of the strained MXene cell or of the metal cell in the viewer.
 
 Lattice constants come from `data/MXene_FCC_L12_strain_matrix.xlsx` (41 ordered MXenes, 23 metals). Solid solutions, Ti₃C₂Tₓ and Ni₃(Al,Ti) are left out.
 
@@ -26,16 +26,16 @@ Fixed geometry rules for the starting structure:
 
 The MXene basal plane and the metal (111) plane are both hexagonal nets, written as rectangular cells: a × √3a for the MXene and a₁₁₁ × √3a₁₁₁ for the metal (`a_111 (A)` in the spreadsheet; twice that for L1₂). The two in-plane directions are matched separately. For each direction, with cell lengths L_MX (a along x, √3a along y) and L_M (a₁₁₁ or √3a₁₁₁):
 
-1. Try m = 1, 2, … up to `max_replicas` MXene replicas.
-2. For each m, take the whole number of metal replicas closest to the same length: n = round(m · L_MX / L_M), at least 1.
-3. The metal strain is ε = m · L_MX / (n · L_M) − 1.
-4. Keep the first m with |ε| ≤ `tol`. This gives the smallest supercell that fits the tolerance.
+1. Try n = 1, 2, … up to `max_replicas` metal replicas.
+2. For each n, take the whole number of MXene replicas closest to the same length: m = round(n · L_M / L_MX), at least 1.
+3. The MXene strain is ε = n · L_M / (m · L_MX) − 1.
+4. Keep the first n with |ε| ≤ `tol`. This gives the smallest supercell that fits the tolerance.
 
-The box is then m_x · a by m_y · √3a. The MXene keeps its lattice constant, and the metal is strained by ε_x and ε_y to fill the box exactly. Both cells have the same √3 aspect ratio, so x and y give the same m, n and ε: the metal (111) net takes an equi-biaxial strain, and at m = n = 1 it is the value in the spreadsheet's `Strain` sheet. If no m up to `max_replicas` works, the build stops with an error; raise `tol` or `max_replicas`.
+The box is then n_x · a₁₁₁ by n_y · √3a₁₁₁ (twice that for L1₂). The metal keeps its lattice constant, and the MXene is strained in-plane by ε_x and ε_y to fill the box exactly. Its layer heights are those of the unstrained MXene. Both cells have the same √3 aspect ratio, so x and y give the same m, n and ε: the MXene takes an equi-biaxial strain. At m = n = 1 it is ε = −δ/(1 + δ), where δ = (a_MXene − a₁₁₁)/a₁₁₁ is the value in the spreadsheet's `Strain` sheet (the metal strain if the metal were strained instead). If no n up to `max_replicas` works, the build stops with an error; raise `tol` or `max_replicas`.
 
 For example:
-- Au (a₁₁₁ = 2.884 Å) on V₂C (a = 2.881 Å): 1 × 1, ε = −0.09 %.
-- Au on Ti₃C₂ (a = 3.104 Å): 1 × 1 would be +7.6 %. The first coincidence within 2 % is 11 MXene cells on 12 Au cells (ε = −1.3 %), so it needs `max_replicas` ≥ 11; 13 : 14 gives −0.05 %.
+- V₂C (a = 2.881 Å) on Au (a₁₁₁ = 2.884 Å): 1 × 1, ε = +0.09 %.
+- Ti₃C₂ (a = 3.104 Å) on Au: 1 × 1 would be −7.1 %. The first coincidence within 2 % is 11 MXene cells on 12 Au cells (ε = +1.35 %), so it needs `max_replicas` ≥ 12; 13 : 14 gives +0.05 %.
 
 The *Box* panel in the web app and `outputs.json → match` report m, n, the box length and ε for each direction.
 
@@ -74,7 +74,7 @@ python relax.py inputs.json       # build and relax: adds POSCAR_relaxed and the
 - **Outputs:** `formula`, `n_atoms`, `box`, `strain_x`, `strain_y`, `match`, the POSCARs as text, and after a relaxation `energy`, `gap_relaxed` and `work_of_adhesion` (empty otherwise). `summary` holds everything in `outputs.json`.
 - `simtool/builder.py` and `simtool/relax.py` are links to the top-level files. The notebook lists them and `sim2l.py` as `EXTRA_FILES`, so each run gets them, and `builder.py` finds the spreadsheet through the link.
 - `landing_page.ipynb` is the page nanoHUB opens: abstract, links and references.
-- `bin/interactive.ipynb` is a form like the web app (ipywidgets): menus for the MXene, metal and placement, a rebuild after each change, a Relax button, the structure views, tables and POSCAR downloads. Every build runs the Sim2L.
+- `bin/interactive.ipynb` is a form like the web app (ipywidgets): menus for the MXene, metal and placement, a rebuild after each change, a Relax button with live progress (step, energy and fmax, read from the `progress.jsonl` the Sim2L writes in its run folder at every FIRE step), the structure views, tables and POSCAR downloads. Every build runs the Sim2L.
 - `bin/workflow.ipynb` sets the inputs, runs the Sim2L with `simtool.Run`, and shows the match, a side and top view and the POSCARs. It runs in `anaconda-7`'s `python3` kernel, which has `simtool` and `papermill`.
 - `middleware/invoke` (nanoHUB's Sim2L template) opens the landing page in a nanoHUB Jupyter session with `anaconda-7`. The Sim2L notebook itself runs in that module's `torchsim` kernel (Python 3.12, torch 2.8, mace-torch 0.3.14, pymatgen 2025.10, ase 3.27). That kernel has neither `simtool` nor `yamlmagic`, so `simtool/sim2l.py` stands in for them there (it uses them when they are installed); the caller's `simtool` reads the outputs as usual. mace-torch 0.3.14 does not know the name `mh-1`, so `relax.py` then loads MACE-MH-1 from its download URL.
 - The MXene and metal option lists in the notebook are the spreadsheet rows. Update them if you add rows.
@@ -104,8 +104,8 @@ r.read("POSCAR"), r.read("strain_x")
 | `metal_stacking` | `ABC` | `ABC` climbs A → B → C (continues an MXene at 0°), `ACB` climbs A → C → B (continues one at 180°) |
 | `gap` | 2.3 | Å, top MXene layer to first metal (111) layer |
 | `shift` | [0, 0] | Å, in-plane shift of the metal along x, y, from its site |
-| `tol` | 0.02 | largest \|strain\| on the metal along x and y |
-| `max_replicas` | 10 | largest number of MXene replicas tried per direction |
+| `tol` | 0.02 | largest \|strain\| on the MXene along x and y |
+| `max_replicas` | 10 | largest number of metal replicas tried per direction |
 | `model` | `mh-1` | MACE foundation model |
 | `head` | `omat_pbe` | output head of the MH models: `omat_pbe` (PBE(+U)), `oc20_usemppbe` (PBE slabs), `matpes_r2scan` (r²SCAN) |
 | `dispersion` | false | add D3(BJ) |
@@ -118,9 +118,9 @@ r.read("POSCAR"), r.read("strain_x")
 ## Outputs (`outputs.json`)
 
 - `inputs`: every input used, defaults filled in.
-- `mxene`: spreadsheet row, layers, sites, cell and thickness.
-- `metal`: spreadsheet row (with a₁₁₁), space group, d₁₁₁, orientation, layer sites, the (111) cell before and after strain and the strained cubic cell vectors.
-- `match`: replicas, box length and metal strain along x and y.
+- `mxene`: spreadsheet row, layers, sites, the cell before and after strain, the strained cell vectors and the thickness.
+- `metal`: spreadsheet row (with a₁₁₁), space group, d₁₁₁, orientation, layer sites, the (111) cell and the cubic cell vectors.
+- `match`: replicas, box length and MXene strain along x and y.
 - `interface`: formula, atom count, box and per-layer table.
 - `spreadsheet`: file name and SHA-256.
 - `files`: `POSCAR` (interface), `POSCAR_<mxene>`, `POSCAR_<metal>`.
@@ -158,7 +158,7 @@ Displacements are Cartesian, using the minimum image in-plane. When the in-plane
 
 ## Atomic planes
 
-(hkl) refer to the MXene a × √3a × c cell (turned with the MXene, so at 180° its a and b point along −x and −y) or to the metal's strained cubic cell, whose [111] is along z, so metal (111) planes are the horizontal layers. The MXene c includes the vacuum, so MXene planes with l ≠ 0 tilt with it.
+(hkl) refer to the MXene's strained a × √3a × c cell (turned with the MXene, so at 180° its a and b point along −x and −y) or to the metal's cubic cell, whose [111] is along z, so metal (111) planes are the horizontal layers. The MXene c includes the vacuum, so MXene planes with l ≠ 0 tilt with it.
 
 ## Files
 

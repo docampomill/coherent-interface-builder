@@ -3,10 +3,17 @@ coherentmxmetal Sim2L with simtool.Run.
 
     from interactive_ui import app; app()
 """
+from IPython.display import HTML, display
+
+loading = display(HTML("⏳ Loading the interface builder…"), display_id=True)   # while the imports below run
+
 import base64
 import contextlib
 import html
 import json
+import threading
+import time
+import uuid
 import warnings
 from pathlib import Path
 
@@ -16,13 +23,15 @@ from ase.data import atomic_numbers
 from ase.data.colors import jmol_colors
 from ase.io import read
 from ase.visualize.plot import plot_atoms
-from IPython.display import display
-from io import StringIO
+from io import BytesIO, StringIO
 from simtool import searchForSimTool, getSimToolInputs, Run
+from simtool.experiment import get_experiment
 
 loc = searchForSimTool("coherentmxmetal")
 schema = getSimToolInputs(loc)
 GREEK = {"A": "α", "B": "β", "C": "γ"}
+SPIN_CSS = "@keyframes cib-spin { to { transform: rotate(360deg) } } .cib-spin { display: inline-block; width: 1em; height: 1em; border: 2px solid #ccc; border-top-color: #1f4e79; border-radius: 50%; animation: cib-spin 0.8s linear infinite; vertical-align: -0.15em; margin-right: 0.4em }"
+SPIN = "<span class='cib-spin'></span>"                  # loading icon, styled by SPIN_CSS
 WIDE, HALF = w.Layout(width="100%"), w.Layout(width="48%")
 STYLE = {"description_width": "initial"}
 
@@ -64,7 +73,7 @@ f = dict(
     shift_x=number("shift_x", "Shift x (Å)"),
     shift_y=number("shift_y", "Shift y (Å)"),
     tol=number("tol", "Strain tolerance", 0.005),
-    max_replicas=number("max_replicas", "Max replicas", 1),
+    max_replicas=number("max_replicas", "Max metal replicas", 1),
     vacuum=number("vacuum", "Vacuum below (Å)", 0.5),
     model=w.Text(value=value("model"), description="MACE model", style=STYLE, layout=HALF),
     head=choice("head", "Head", [("omat_pbe · PBE(+U)", "omat_pbe"), ("oc20_usemppbe · PBE slabs", "oc20_usemppbe"),
@@ -80,6 +89,8 @@ auto = w.Checkbox(value=True, description="Rebuild on every change", indent=Fals
 build_button = w.Button(description="Build", button_style="primary", icon="cubes")
 relax_button = w.Button(description="Relax", button_style="warning", icon="play")
 status = w.HTML()
+relax_status = w.HTML()
+progress = w.IntProgress(min=0, max=1, layout=w.Layout(width="100%", visibility="hidden"))
 
 
 def section(step, title, *children, hint=None):
@@ -96,12 +107,12 @@ form = w.VBox([
     section(2, "Metal", row(f["metal"], f["metal_layers"]), row(f["metal_site"], f["metal_stacking"])),
     section(3, "Location", row(f["gap"], f["vacuum"]), row(f["shift_x"], f["shift_y"]), row(f["tol"], f["max_replicas"]),
             hint="Metal (111) on MXene (0001), metal [1-10] along x. The gap is from the top MXene layer to the first "
-                 "metal (111) plane; the shift moves the metal from its site. The metal takes the in-plane strain."),
+                 "metal (111) plane; the shift moves the metal from its site. The metal is the substrate and keeps its lattice; the MXene takes the in-plane strain."),
     w.HBox([build_button, auto]),
     section(4, "Relaxation", row(f["model"], f["head"]), f["dispersion"], row(f["fmax"], f["max_steps"]),
-            row(f["fixed_layers"]), f["relax_cell"], f["work_of_adhesion"], relax_button,
+            row(f["fixed_layers"]), f["relax_cell"], f["work_of_adhesion"], relax_button, relax_status, progress,
             hint="MACE runs inside the Sim2L; a relaxation can take minutes. Runs with the same inputs come from the cache."),
-], layout=w.Layout(width="40%", min_width="360px", padding="0 1em 0 0"))
+], layout=w.Layout(flex="0 1 440px", min_width="360px", padding="0 1em 0 0"))
 
 # ---------- results ----------
 readout = w.HTML()
@@ -111,10 +122,10 @@ repeat = w.ToggleButtons(options=[("1×1", 1), ("2×2", 2), ("3×3", 3)], value=
 show = w.ToggleButtons(options=[("Built", "built"), ("Relaxed", "relaxed"), ("Side by side", "split")], value="built",
                        style={"button_width": "auto"})
 show_cell = w.Checkbox(value=True, description="Cell", indent=False, layout=w.Layout(width="auto"))
-viewer = w.Output()
+viewer = w.Image(format="png", layout=w.Layout(width="100%", height="auto"))    # scales to the width available
 tables, files = w.HTML(), w.HTML()
 results = w.VBox([readout, w.HBox([view, repeat]), w.HBox([show, show_cell]), viewer, tables, files],
-                 layout=w.Layout(width="60%"))
+                 layout=w.Layout(flex="1 1 560px", min_width="0"))
 state = dict(outputs=None, built=None, relaxed=None)
 
 
@@ -163,7 +174,7 @@ def render():
                      + f"</p><small style='color:#666'>MXene a = {mx['a']} Å ({html.escape(mx['source'])}); "
                        f"{mt['name']} a = {mt['a']} Å ({html.escape(mt['source'])})</small>")
 
-    parts = [table("Box", ["", "MXene replicas", "Metal replicas", "Box (Å)", "Metal strain"],
+    parts = [table("Box", ["", "MXene replicas", "Metal replicas", "Box (Å)", "MXene strain"],
                    [[axis, f"{m[axis]['mxene']} × {mx['cell'][i]:.4f}", f"{m[axis]['metal']} × {mt['cell'][i]:.4f}",
                      f"{m[axis]['length']:.4f}", pct(m[axis]["strain"])] for i, axis in enumerate("xy")])]
     L = it["layers"]
@@ -202,31 +213,57 @@ def render():
 def draw(*_):
     if state["built"] is None:
         return
-    with viewer:
-        viewer.clear_output(wait=True)
-        both = show.value == "split" and state["relaxed"] is not None
-        shown = [("built", state["built"]), ("relaxed", state["relaxed"])] if both else \
-                [(show.value, state[show.value] if state[show.value] is not None else state["built"])]
-        views = [("front (x–z)", "-90x"), ("side (y–z)", "-90y,-90z"), ("top (x–y)", "")] if view.value == "all" else \
-                [(dict((v, k) for k, v in view.options)[view.value].lower(), view.value)]
-        fig, axes = plt.subplots(len(shown), len(views), figsize=(3.4 * len(views) + 1, 4.5 * len(shown)), squeeze=False)
-        for i, (which, atoms) in enumerate(shown):
-            for j, (title, rotation) in enumerate(views):
-                plot_atoms(atoms.repeat((repeat.value, repeat.value, 1)), axes[i, j], rotation=rotation, radii=0.5,
-                           show_unit_cell=2 if show_cell.value else 0)
-                axes[i, j].set_title(f"{which}, {title}" if len(shown) > 1 else title)
-                axes[i, j].set_axis_off()
-        fig.tight_layout()
-        plt.show()
+    both = show.value == "split" and state["relaxed"] is not None
+    shown = [("built", state["built"]), ("relaxed", state["relaxed"])] if both else \
+            [(show.value, state[show.value] if state[show.value] is not None else state["built"])]
+    views = [("front (x–z)", "-90x"), ("side (y–z)", "-90y,-90z"), ("top (x–y)", "")] if view.value == "all" else \
+            [(dict((v, k) for k, v in view.options)[view.value].lower(), view.value)]
+    fig, axes = plt.subplots(len(shown), len(views), figsize=(3.4 * len(views) + 1, 4.5 * len(shown)), squeeze=False)
+    for i, (which, atoms) in enumerate(shown):
+        for j, (title, rotation) in enumerate(views):
+            plot_atoms(atoms.repeat((repeat.value, repeat.value, 1)), axes[i, j], rotation=rotation, radii=0.5,
+                       show_unit_cell=2 if show_cell.value else 0)
+            axes[i, j].set_title(f"{which}, {title}" if len(shown) > 1 else title)
+            axes[i, j].set_axis_off()
+    fig.tight_layout()
+    png = BytesIO()
+    fig.savefig(png, format="png", dpi=110, bbox_inches="tight")
+    plt.close(fig)
+    viewer.value = png.getvalue()
+
+
+def watch(path, done, start):
+    """Shows the last FIRE step the Sim2L wrote to progress.jsonl, like the web app, until done is set."""
+    while not done.wait(0.5):
+        lines = path.read_text().splitlines() if path.exists() else []
+        try:
+            s = json.loads(lines[-1])
+        except (IndexError, ValueError):                       # nothing yet, or a line half written
+            continue
+        progress.value = min(s["step"], progress.max)
+        relax_status.value = (f"Step {s['step']} · E = {s['energy']:.4f} eV · fmax = {s['fmax']:.4f} eV/Å"
+                              f" · {time.time() - start:.0f} s")
 
 
 def run(relax):
     build_button.disabled = relax_button.disabled = True
-    status.value = "<i>Relaxing with MACE…</i>" if relax else "<i>Building…</i>"
+    status.value = "" if relax else f"{SPIN}<i>Building…</i>"
+    name, done = uuid.uuid4().hex, threading.Event()       # the run folder is RUNS/<name>, so it can be watched;
+                                                           # absolute, as papermill changes directory into it
+    watcher = threading.Thread(target=watch, args=(Path(get_experiment(), name, "progress.jsonl").resolve(), done, time.time()),
+                               daemon=True)
+    if relax:
+        relax_status.value = f"{SPIN}<i>Loading MACE {html.escape(f['model'].value)}…</i>"
+        progress.max, progress.value, progress.layout.visibility = f["max_steps"].value, 0, "visible"
+        watcher.start()
     try:
-        with contextlib.redirect_stdout(StringIO()), contextlib.redirect_stderr(StringIO()), warnings.catch_warnings():
+        with contextlib.redirect_stdout(StringIO()), contextlib.redirect_stderr(StringIO()), warnings.catch_warnings(), \
+                w.Output():                                    # never shown: papermill's progress bar
             warnings.simplefilter("ignore")                    # simtool's and papermill's run log
-            r = Run(loc, collect(relax))
+            r = Run(loc, collect(relax), runName=name)
+        done.set()
+        if watcher.is_alive():
+            watcher.join()                                     # its last step line must not overwrite the summary
         poscar_relaxed = r.read("POSCAR_relaxed")
         state["outputs"] = r.read("summary")
         mx, mt = state["outputs"]["mxene"]["formula"], state["outputs"]["metal"]["symbol"]
@@ -242,12 +279,22 @@ def run(relax):
         elif state["relaxed"] is None:
             show.value = "built"
         status.value = ""
+        if relax:
+            rx, i = state["outputs"]["relaxation"], state["outputs"]["inputs"]
+            verdict = "stopped" if rx["stopped"] else "converged" if rx["converged"] else "not converged"
+            relax_status.value = (f"{i['model']} ({i['head']}){' + D3(BJ)' if i['dispersion'] else ''}: {verdict} after "
+                                  f"{rx['n_steps']} steps, E = {rx['energy_final']:.4f} eV, fmax = {rx['fmax_final']:.4f} eV/Å"
+                                  + (" (from the cache)" if r.cached else ""))
         render()
         draw()
     except Exception as error:
         lines = [line for line in str(error).splitlines() if line.strip()] or [type(error).__name__]
         status.value = f"<span style='color:#b00020'>{html.escape(lines[-1])}</span>"   # last line of the Sim2L traceback
+        if relax:
+            relax_status.value = ""
     finally:
+        done.set()
+        progress.layout.visibility = "hidden"
         build_button.disabled = relax_button.disabled = False
 
 
@@ -260,6 +307,17 @@ for widget in (view, repeat, show, show_cell):
     widget.observe(draw, names="value")
 
 def app():
-    """Shows the form and builds the interface with the current inputs."""
-    display(w.VBox([status, w.HBox([form, results], layout=w.Layout(flex_flow="row wrap"))]))
+    """Builds the interface with the current inputs, then shows the form in place of the loading message."""
+    global loading
+    display(HTML("<style>.container { width: 98% !important; }"                  # classic Notebook
+                 " :root, body { --jp-notebook-max-width: 100% !important; }"     # Notebook 7
+                 f" {SPIN_CSS}</style>"))
+    message = HTML(f"<p>{SPIN}Building the first interface…</p>")
+    if loading:
+        loading.update(message)
+    else:
+        loading = display(message, display_id=True)
     run(False)
+    loading.update(HTML(""))
+    loading = None                                         # a second app() shows its own message
+    display(w.VBox([status, w.HBox([form, results], layout=w.Layout(flex_flow="row wrap"))]))

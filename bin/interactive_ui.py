@@ -26,9 +26,11 @@ from ase.visualize.plot import plot_atoms
 from io import BytesIO, StringIO
 from simtool import searchForSimTool, getSimToolInputs, Run
 from simtool.experiment import get_experiment
+from simtool.run import submitAvailable
 
 loc = searchForSimTool("coherentmxmetal")
 schema = getSimToolInputs(loc)
+VENUE = "local" if submitAvailable else None     # nanoHUB: submit --local in the run folder (see README)
 GREEK = {"A": "α", "B": "β", "C": "γ"}
 SPIN_CSS = "@keyframes cib-spin { to { transform: rotate(360deg) } } .cib-spin { display: inline-block; width: 1em; height: 1em; border: 2px solid #ccc; border-top-color: #1f4e79; border-radius: 50%; animation: cib-spin 0.8s linear infinite; vertical-align: -0.15em; margin-right: 0.4em }"
 SPIN = "<span class='cib-spin'></span>"                  # loading icon, styled by SPIN_CSS
@@ -248,6 +250,7 @@ def watch(path, done, start):
 def run(relax):
     build_button.disabled = relax_button.disabled = True
     status.value = "" if relax else f"{SPIN}<i>Building…</i>"
+    Path("last_run.log").unlink(missing_ok=True)          # written again if this run fails
     name, done = uuid.uuid4().hex, threading.Event()       # the run folder is RUNS/<name>, so it can be watched;
                                                            # absolute, as papermill changes directory into it
     watcher = threading.Thread(target=watch, args=(Path(get_experiment(), name, "progress.jsonl").resolve(), done, time.time()),
@@ -257,13 +260,24 @@ def run(relax):
         progress.max, progress.value, progress.layout.visibility = f["max_steps"].value, 0, "visible"
         watcher.start()
     try:
-        with contextlib.redirect_stdout(StringIO()), contextlib.redirect_stderr(StringIO()), warnings.catch_warnings(), \
+        log, failure = StringIO(), None
+        with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log), warnings.catch_warnings(), \
                 w.Output():                                    # never shown: papermill's progress bar
             warnings.simplefilter("ignore")                    # simtool's and papermill's run log
-            r = Run(loc, collect(relax), runName=name)
+            try:
+                r = Run(loc, collect(relax), runName=name, venue=VENUE)
+            except Exception as error:                         # caught here: w.Output() would swallow it
+                failure = error
         done.set()
         if watcher.is_alive():
             watcher.join()                                     # its last step line must not overwrite the summary
+        if failure is None and r.read("summary") is None:     # on nanoHUB a failed run returns no outputs
+            failure = RuntimeError(" · ".join(line for line in log.getvalue().splitlines()
+                                             if any(k in line for k in ("Error", "failed", "missing"))) or
+                                   "The Sim2L run returned no outputs")
+        if failure is not None:
+            Path("last_run.log").write_text(log.getvalue())
+            raise failure
         poscar_relaxed = r.read("POSCAR_relaxed")
         state["outputs"] = r.read("summary")
         mx, mt = state["outputs"]["mxene"]["formula"], state["outputs"]["metal"]["symbol"]
@@ -288,8 +302,12 @@ def run(relax):
         render()
         draw()
     except Exception as error:
-        lines = [line for line in str(error).splitlines() if line.strip()] or [type(error).__name__]
-        status.value = f"<span style='color:#b00020'>{html.escape(lines[-1])}</span>"   # last line of the Sim2L traceback
+        lines = [line for line in str(error).splitlines() if line.strip()] or [""]
+        last = lines[-1]                                       # last line of the Sim2L traceback, with its type
+        if not (last.split(":")[0].isidentifier() or isinstance(error, RuntimeError)):
+            last = f"{type(error).__name__}: {last}"
+        hint = " (full log in last_run.log)" if Path("last_run.log").exists() else ""
+        status.value = f"<span style='color:#b00020'>{html.escape(last)}{hint}</span>"
         if relax:
             relax_status.value = ""
     finally:

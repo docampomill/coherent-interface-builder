@@ -8,3 +8,4 @@ bin/RUNS/
 bin/POSCAR*
 bin/outputs.json
 .ipynb_checkpoints/
+bin/last_run.log

@@ -91,7 +91,7 @@ def relax(inputs, progress=None, should_stop=None):
     a, b, _, _, _, gamma = atoms.cell.cellpar()
     result = dict(optimizer="FIRE", fixed_atoms=len(fixed), converged=bool(converged) and not stopped, stopped=stopped,
                   n_steps=opt.nsteps, energy_initial=trace[0]["energy"], energy_final=float(atoms.get_potential_energy()),
-                  fmax_final=trace[-1]["fmax"], cell=dict(a=round(a, 4), b=round(b, 4), gamma=round(gamma, 3)),
+                  fmax_final=trace[-1]["fmax"], cell=dict(a=round(float(a), 4), b=round(float(b), 4), gamma=round(float(gamma), 3)),
                   gap=round(float(z[layers == n_mx].mean() - z[layers == n_mx - 1].mean()), 4),
                   versions={pkg: version(pkg) for pkg in ("mace-torch", "torch", "torch-dftd", "ase")}, trace=trace)
 

@@ -13,6 +13,7 @@ import html
 import json
 import threading
 import time
+import traceback
 import uuid
 import warnings
 from pathlib import Path
@@ -36,6 +37,7 @@ SPIN_CSS = "@keyframes cib-spin { to { transform: rotate(360deg) } } .cib-spin {
 SPIN = "<span class='cib-spin'></span>"                  # loading icon, styled by SPIN_CSS
 WIDE, HALF = w.Layout(width="100%"), w.Layout(width="48%")
 STYLE = {"description_width": "initial"}
+LOG = Path("last_run.log").resolve()                   # absolute: papermill changes directory
 
 
 def value(name):
@@ -247,10 +249,14 @@ def watch(path, done, start):
                               f" · {time.time() - start:.0f} s")
 
 
+class InputError(Exception):
+    """The Sim2L rejected the inputs (a ValueError in builder.py), e.g. no match within the tolerance."""
+
+
 def run(relax):
     build_button.disabled = relax_button.disabled = True
     status.value = "" if relax else f"{SPIN}<i>Building…</i>"
-    Path("last_run.log").unlink(missing_ok=True)          # written again if this run fails
+    LOG.unlink(missing_ok=True)                            # written again if this run fails
     name, done = uuid.uuid4().hex, threading.Event()       # the run folder is RUNS/<name>, so it can be watched;
                                                            # absolute, as papermill changes directory into it
     watcher = threading.Thread(target=watch, args=(Path(get_experiment(), name, "progress.jsonl").resolve(), done, time.time()),
@@ -266,20 +272,24 @@ def run(relax):
             warnings.simplefilter("ignore")                    # simtool's and papermill's run log
             try:
                 r = Run(loc, collect(relax), runName=name, venue=VENUE)
+                summary = r.read("summary")                # in here: simtool prints when it is missing
             except Exception as error:                         # caught here: w.Output() would swallow it
                 failure = error
         done.set()
         if watcher.is_alive():
             watcher.join()                                     # its last step line must not overwrite the summary
-        if failure is None and r.read("summary") is None:     # on nanoHUB a failed run returns no outputs
+        rejected = [line[len("ValueError: "):] for line in log.getvalue().splitlines() if line.startswith("ValueError: ")]
+        if failure is None and summary is None and rejected:  # the inputs, not the run: say what to change
+            failure = InputError(rejected[-1])
+        elif failure is None and summary is None:             # on nanoHUB a failed run returns no outputs
             failure = RuntimeError(" · ".join(line for line in log.getvalue().splitlines()
                                              if any(k in line for k in ("Error", "failed", "missing"))) or
                                    "The Sim2L run returned no outputs")
         if failure is not None:
-            Path("last_run.log").write_text(log.getvalue())
+            LOG.write_text(log.getvalue())
             raise failure
         poscar_relaxed = r.read("POSCAR_relaxed")
-        state["outputs"] = r.read("summary")
+        state["outputs"] = summary
         mx, mt = state["outputs"]["mxene"]["formula"], state["outputs"]["metal"]["symbol"]
         state["files"] = {name: text for name, text in [("POSCAR", r.read("POSCAR")), (f"POSCAR_{mx}", r.read("POSCAR_mxene")),
                           (f"POSCAR_{mt}", r.read("POSCAR_metal")), ("POSCAR_relaxed", poscar_relaxed),
@@ -304,9 +314,11 @@ def run(relax):
     except Exception as error:
         lines = [line for line in str(error).splitlines() if line.strip()] or [""]
         last = lines[-1]                                       # last line of the Sim2L traceback, with its type
-        if not (last.split(":")[0].isidentifier() or isinstance(error, RuntimeError)):
+        if not (last.split(":")[0].isidentifier() or isinstance(error, (RuntimeError, InputError))):
             last = f"{type(error).__name__}: {last}"
-        hint = " (full log in last_run.log)" if Path("last_run.log").exists() else ""
+        with LOG.open("a") as file:                        # the Sim2L log, if any, then where it failed
+            file.write(traceback.format_exc())
+        hint = "" if isinstance(error, InputError) else " (full log in last_run.log)"
         status.value = f"<span style='color:#b00020'>{html.escape(last)}{hint}</span>"
         if relax:
             relax_status.value = ""

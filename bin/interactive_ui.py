@@ -12,6 +12,7 @@ import contextlib
 import html
 import json
 import re
+import shutil
 import sys
 import threading
 import time
@@ -291,7 +292,7 @@ def run(relax):
         progress.max, progress.value, progress.layout.visibility = 1 if f["single_point"].value else f["max_steps"].value, 0, "visible"
         watcher.start()
     try:
-        log, failure = Capture(), None
+        log, failure, r = Capture(), None, None
         with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log), warnings.catch_warnings(), \
                 w.Output():                                    # never shown: papermill's progress bar
             warnings.simplefilter("ignore")                    # simtool's and papermill's run log
@@ -315,6 +316,9 @@ def run(relax):
             errors = [line for line in launch if re.match(r"^[A-Za-z_.]*(Error|Exception): ", line)]
             failure = RuntimeError(f"The Sim2L did not start: {errors[-1] if errors else 'see the log'}")
         if failure is not None:
+            rdir = getattr(getattr(r, "dstore", None), "rdir", None)
+            if rdir and Path(rdir).is_dir():               # simtool caches failed runs too: the same inputs
+                shutil.rmtree(rdir, ignore_errors=True)    # would return this failure again instead of running
             LOG.write_text(log.getvalue())
             raise failure
         poscar_relaxed = r.read("POSCAR_relaxed")

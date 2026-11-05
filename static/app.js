@@ -10,9 +10,9 @@ const pct = (v) => `${v >= 0 ? "+" : "−"}${Math.abs(100 * v).toFixed(2)} %`;
 
 const state = { last: null, planes: null, plane: 0, result: null, relaxed: null, show: "built" };   // result: last MACE job; relaxed: same, if it relaxed
 const RELAX_IDS = ["model", "head", "dispersion", "fmax", "max_steps", "fixed_layers", "relax_cell", "ionic_relaxation", "single_point", "work_of_adhesion"];
-// Relaxation modes, exactly one checked: atoms + in-plane cell, atoms only, or a single point. The backend has
-// relax_cell and single_point; ionic relaxation is neither of them.
-const MODES = ["relax_cell", "ionic_relaxation", "single_point"];
+// Relaxation modes, exactly one checked: a single point (the default), atoms only, or atoms + in-plane cell. The
+// backend has single_point and relax_cell; ionic relaxation is neither of them.
+const MODES = ["single_point", "ionic_relaxation", "relax_cell"];
 
 /* ---------- helpers ---------- */
 
@@ -84,6 +84,7 @@ function collectInputs() {
 
 function applyInputs(given) {
   const p = { ...OPTIONS.defaults, ...given };
+  if (given.relax_cell !== undefined && given.single_point === undefined) p.single_point = false;   // a file from before single points
   $("mxene").value = p.mxene;
   document.querySelector(`input[name=stacking][value=${p.stacking}]`).checked = true;
   document.querySelector(`input[name=mxene_rotation][value="${p.mxene_rotation}"]`).checked = true;

@@ -36,7 +36,7 @@ def index():
         mxenes[row["family"]].append(row)
     for row in builder.METALS.values():
         metals[row["structure"]].append(row)
-    options = dict(mxenes=mxenes, metals=metals, heads=relax.HEADS, defaults={**builder.DEFAULTS, **relax.DEFAULTS},
+    options = dict(mxenes=mxenes, metals=metals, heads=relax.HEADS, defaults={**builder.DEFAULTS, **relax.DEFAULTS, "single_point": True},   # the form opens on a single point
                    spreadsheet=dict(file=builder.SPREADSHEET.name, sha256=builder.SHA256))
     return render_template("index.html", options=options)
 

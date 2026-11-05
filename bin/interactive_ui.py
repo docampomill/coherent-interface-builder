@@ -98,11 +98,11 @@ f = dict(
 )
 # Ionic relaxation (atoms only, fixed cell) is neither relax_cell nor single_point, so it is not a Sim2L input
 # and stays out of f, which collect() copies into the inputs.
-ionic = w.Checkbox(value=not value("relax_cell") and not value("single_point"), description="Ionic relaxation", indent=False)
-f["relax_cell"].value = f["relax_cell"].value and not f["single_point"].value
+ionic = w.Checkbox(value=False, description="Ionic relaxation", indent=False)
+f["single_point"].value, f["relax_cell"].value = True, False     # the form opens on a single point
 auto = w.Checkbox(value=True, description="Rebuild on every change", indent=False)
 build_button = w.Button(description="Build", button_style="primary", icon="cubes")
-relax_button = w.Button(description="Relax", button_style="warning", icon="play")
+relax_button = w.Button(description="Compute energy", button_style="warning", icon="play")
 status = w.HTML()
 relax_status = w.HTML()
 progress = w.IntProgress(min=0, max=1, layout=w.Layout(width="100%", visibility="hidden"))
@@ -125,7 +125,7 @@ form = w.VBox([
                  "metal (111) plane; the shift slides the MXene over the metal. The metal is the substrate and keeps its lattice; the MXene takes the in-plane strain."),
     w.HBox([build_button, auto]),
     section(4, "Relaxation", row(f["model"], f["head"]), f["dispersion"], row(f["fmax"], f["max_steps"]),
-            row(f["fixed_layers"]), f["relax_cell"], ionic, f["single_point"], f["work_of_adhesion"], relax_button, relax_status, progress,
+            row(f["fixed_layers"]), f["single_point"], ionic, f["relax_cell"], f["work_of_adhesion"], relax_button, relax_status, progress,
             hint="MACE runs inside the Sim2L; a relaxation can take minutes. Runs with the same inputs come from the cache."),
 ], layout=w.Layout(flex="0 1 440px", min_width="360px", padding="0 1em 0 0"))
 
@@ -366,7 +366,7 @@ def run(relax):
 build_button.on_click(lambda _: run(False))
 
 
-MODES = [f["relax_cell"], ionic, f["single_point"]]     # exactly one checked, like radio buttons
+MODES = [f["single_point"], ionic, f["relax_cell"]]     # exactly one checked, like radio buttons
 
 
 def exclusive(change):

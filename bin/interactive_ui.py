@@ -11,6 +11,7 @@ import base64
 import contextlib
 import html
 import json
+import sys
 import threading
 import time
 import traceback
@@ -261,6 +262,14 @@ def watch(path, done, start):
                               f" · {time.time() - start:.0f} s")
 
 
+class Capture(StringIO):
+    """Collects the run's output like StringIO, but has a fileno: hubzero's submit calls sys.stdout.fileno(),
+    and a plain StringIO raises io.UnsupportedOperation there, so the Sim2L never starts."""
+
+    def fileno(self):
+        return sys.__stdout__.fileno()
+
+
 class InputError(Exception):
     """The Sim2L rejected the inputs (a ValueError in builder.py), e.g. no match within the tolerance."""
 
@@ -278,7 +287,7 @@ def run(relax):
         progress.max, progress.value, progress.layout.visibility = 1 if f["single_point"].value else f["max_steps"].value, 0, "visible"
         watcher.start()
     try:
-        log, failure = StringIO(), None
+        log, failure = Capture(), None
         with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log), warnings.catch_warnings(), \
                 w.Output():                                    # never shown: papermill's progress bar
             warnings.simplefilter("ignore")                    # simtool's and papermill's run log

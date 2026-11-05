@@ -11,6 +11,7 @@ import base64
 import contextlib
 import html
 import json
+import re
 import sys
 import threading
 import time
@@ -29,6 +30,9 @@ from io import BytesIO, StringIO
 from simtool import searchForSimTool, getSimToolInputs, Run
 from simtool.experiment import get_experiment
 from simtool.run import submitAvailable
+from submit_env import use_env_libraries
+
+use_env_libraries()                              # submit --local must find the environment's libstdc++ (see submit_env.py)
 
 loc = searchForSimTool("coherentmxmetal")
 schema = getSimToolInputs(loc)
@@ -306,6 +310,10 @@ def run(relax):
             failure = RuntimeError(" · ".join(line for line in log.getvalue().splitlines()
                                              if any(k in line for k in ("Error", "failed", "missing"))) or
                                    "The Sim2L run returned no outputs")
+        launch = log.getvalue().split("SimTool execution failed")[0].splitlines()
+        if isinstance(failure, FileNotFoundError) and len(launch) < len(log.getvalue().splitlines()):
+            errors = [line for line in launch if re.match(r"^[A-Za-z_.]*(Error|Exception): ", line)]
+            failure = RuntimeError(f"The Sim2L did not start: {errors[-1] if errors else 'see the log'}")
         if failure is not None:
             LOG.write_text(log.getvalue())
             raise failure

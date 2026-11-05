@@ -8,8 +8,11 @@ const color = (e) => "#" + ($3Dmol.elementColors.Jmol[e] ?? 0x999999).toString(1
 const fmt = (v, d = 3) => (v === null || v === undefined ? "–" : Number(v).toFixed(d));
 const pct = (v) => `${v >= 0 ? "+" : "−"}${Math.abs(100 * v).toFixed(2)} %`;
 
-const state = { last: null, planes: null, plane: 0, relaxed: null, show: "built" };
-const RELAX_IDS = ["model", "head", "dispersion", "fmax", "max_steps", "fixed_layers", "relax_cell", "work_of_adhesion"];
+const state = { last: null, planes: null, plane: 0, result: null, relaxed: null, show: "built" };   // result: last MACE job; relaxed: same, if it relaxed
+const RELAX_IDS = ["model", "head", "dispersion", "fmax", "max_steps", "fixed_layers", "relax_cell", "ionic_relaxation", "single_point", "work_of_adhesion"];
+// Relaxation modes, exactly one checked: atoms + in-plane cell, atoms only, or a single point. The backend has
+// relax_cell and single_point; ionic relaxation is neither of them.
+const MODES = ["relax_cell", "ionic_relaxation", "single_point"];
 
 /* ---------- helpers ---------- */
 
@@ -74,6 +77,7 @@ function collectInputs() {
     max_steps: num("max_steps", d.max_steps),
     fixed_layers: num("fixed_layers", d.fixed_layers),
     relax_cell: $("relax_cell").checked,
+    single_point: $("single_point").checked,
     work_of_adhesion: $("work_of_adhesion").checked,
   };
 }
@@ -87,7 +91,11 @@ function applyInputs(given) {
   $("metal_site").value = p.metal_site;
   $("metal_stacking").value = p.metal_stacking;
   for (const k of ["vacuum", "metal_layers", "gap", "tol", "max_replicas", "model", "head", "fmax", "max_steps", "fixed_layers"]) $(k).value = p[k];
-  for (const k of ["dispersion", "relax_cell", "work_of_adhesion"]) $(k).checked = p[k];
+  for (const k of ["dispersion", "work_of_adhesion"]) $(k).checked = p[k];
+  $("single_point").checked = Boolean(p.single_point);
+  $("relax_cell").checked = Boolean(p.relax_cell) && !p.single_point;
+  $("ionic_relaxation").checked = !p.relax_cell && !p.single_point;
+  relaxLabel();
   [$("shift_x").value, $("shift_y").value] = p.shift;
 }
 
@@ -218,9 +226,14 @@ function hidePlanes() {
 
 /* ---------- relaxation ---------- */
 
+// The button says what the checked mode will do.
+function relaxLabel() {
+  $("relaxBtn").textContent = $("single_point").checked ? "Compute energy" : "Relax";
+}
+
 function clearRelaxed() {
-  if (!state.relaxed) return;
-  state.relaxed = null;
+  if (!state.result) return;
+  state.result = state.relaxed = null;
   $("relaxPanel").hidden = true;
   $("comparePanel").hidden = true;
   $("relaxStatus").textContent = "";
@@ -252,18 +265,36 @@ async function startRelax() {
     $("relaxBtn").disabled = false;
     $("stopBtn").hidden = true;
     if (job.state === "error") { showError(job.error); $("relaxStatus").textContent = ""; return; }
-    state.relaxed = job.result;
+    state.result = job.result;
     renderRelaxation(job.result.outputs);
-    renderComparison(job.result.outputs);
     renderFiles(job.result.outputs);
-    document.querySelectorAll("[data-show]").forEach((b) => { b.disabled = false; });
-    setShow("relaxed");
+    if (job.result.outputs.comparison) {            // a single point has no relaxed structure to show
+      state.relaxed = job.result;
+      renderComparison(job.result.outputs);
+      document.querySelectorAll("[data-show]").forEach((b) => { b.disabled = false; });
+      setShow("relaxed");
+    }
     return;
   }
 }
 
 function renderRelaxation(o) {
   const r = o.relaxation;
+  const model = `${o.inputs.model} (${o.inputs.head})${o.inputs.dispersion ? " + D3(BJ)" : ""}`;
+  if (r.single_point) {
+    const rows = [
+      ["Status", "single point", "built structure, no ionic relaxation"],
+      ["Energy", fmt(r.energy_final, 4), "eV"],
+      ["fmax", fmt(r.fmax_final, 4), "eV/Å"],
+      ["MXene–metal gap", fmt(r.gap, 3), "Å"],
+      ["Fixed atoms", String(r.fixed_atoms), ""],
+    ];
+    if (r.work_of_adhesion !== undefined) rows.push(["Work of adhesion", fmt(r.work_of_adhesion, 3), "J/m² (rigid)"]);
+    $("relaxBody").replaceChildren(...rows.map(([k, v, u]) => h("tr", {}, h("td", {}, k), h("td", { class: "num" }, v), h("td", {}, u))));
+    $("relaxStatus").textContent = `${model}: single point, E = ${fmt(r.energy_final, 4)} eV.`;
+    $("relaxPanel").hidden = false;
+    return;
+  }
   const rows = [
     ["Status", r.stopped ? "stopped" : r.converged ? "converged" : "not converged", `${r.n_steps} steps`],
     ["Energy", `${fmt(r.energy_initial, 4)} → ${fmt(r.energy_final, 4)}`, "eV"],
@@ -274,7 +305,7 @@ function renderRelaxation(o) {
   ];
   if (r.work_of_adhesion !== undefined) rows.push(["Work of adhesion", fmt(r.work_of_adhesion, 3), "J/m²"]);
   $("relaxBody").replaceChildren(...rows.map(([k, v, u]) => h("tr", {}, h("td", {}, k), h("td", { class: "num" }, v), h("td", {}, u))));
-  $("relaxStatus").textContent = `${o.inputs.model} (${o.inputs.head})${o.inputs.dispersion ? " + D3(BJ)" : ""}: ${rows[0][1]} after ${r.n_steps} steps.`;
+  $("relaxStatus").textContent = `${model}: ${rows[0][1]} after ${r.n_steps} steps.`;
   $("relaxPanel").hidden = false;
 }
 
@@ -481,6 +512,10 @@ $("showCell").addEventListener("change", () => Viewer.redraw());
 document.querySelectorAll("[data-show]").forEach((b) => b.addEventListener("click", () => setShow(b.dataset.show)));
 $("arrowScale").addEventListener("change", draw);
 $("relaxBtn").addEventListener("click", startRelax);
+for (const id of MODES) $(id).addEventListener("change", () => {     // like radio buttons: the clicked one stays checked
+  for (const other of MODES) $(other).checked = other === id;
+  relaxLabel();
+});
 $("stopBtn").addEventListener("click", () => fetch("/api/relax/stop", { method: "POST" }));
 $("saveInputs").addEventListener("click", () =>
   saveFile("inputs.json", JSON.stringify(collectInputs(), null, 2) + "\n", "application/json"));

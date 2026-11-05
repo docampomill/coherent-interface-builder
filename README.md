@@ -7,8 +7,8 @@ Builds an MXene/metal interface in one orthogonal box, relaxes it with a MACE ma
 1. **MXene.** Ordered MXene (e.g. Ti₃C₂O₂, Mo₂TiC₂O₂) in its conventional a × √3a × c cell, with AβC (octahedral) or AβA (trigonal prismatic) stacking, optionally turned 180° about z. Vacuum is only below the MXene, so its top layer is at z = c.
 2. **Metal.** Conventional cubic cell built from its space group: FCC `Fm-3m` (4a), or L1₂ `Pm-3m` (B at 1a, A at 3c). It is then turned so that [111] is along z: a stack of close-packed (111) layers, d₁₁₁ = a_cubic/√3 apart, in the same a × √3a form as the MXene with a → a₁₁₁ (a₁₁₁ × √3a₁₁₁ for FCC, 2a₁₁₁ × 2√3a₁₁₁ for L1₂, whose B atoms form a 2 × 2 superlattice in each layer).
 3. **Supercell.** The metal is the substrate and the MXene is added on it. Along x and along y, the tool finds the smallest whole number of metal replicas that matches a whole number of MXene replicas within the strain tolerance. The metal keeps its lattice constant and the MXene takes the strain (see [Supercell matching](#supercell-matching)).
-4. **Placement.** Metal (111) on MXene (0001), metal [1-10] along x, layer by layer: the first metal (111) plane sits at a set gap above the top MXene layer, on site A, B or C of the MXene grid, and the metal layers then follow A → B → C (or its twin). An optional in-plane shift moves the metal off the site.
-5. **Relaxation.** MACE (default MACE-MH-1, `omat_pbe` head) in float64, optional D3(BJ) dispersion and FIRE. The outermost metal layers are held fixed, and the in-plane cell can relax too. Optionally reports the work of adhesion.
+4. **Placement.** Metal (111) on MXene (0001), metal [1-10] along x, layer by layer: the first metal (111) plane sits at a set gap above the top MXene layer, on site A, B or C of the MXene grid, and the metal layers then follow A → B → C (or its twin). An optional in-plane shift slides the MXene over the metal, which stays in place as the substrate.
+5. **Relaxation.** MACE (default MACE-MH-1, `omat_pbe` head) in float64, optional D3(BJ) dispersion and FIRE. The outermost metal layers are held fixed, and the in-plane cell can relax too. The interfaces offer three exclusive modes: relax the in-plane cell (atoms and a, b, γ), ionic relaxation (atoms only, fixed cell), or a single point energy of the built structure (for energy-vs-sliding scans). Optionally reports the work of adhesion.
 6. **Built vs relaxed.** Per-atom displacements, layer heights and spacings, the gap, the MXene thickness and the cell, before and after relaxation (see below).
 7. **Atomic planes.** Shows the (hkl) planes of the strained MXene cell or of the metal cell in the viewer.
 
@@ -104,7 +104,7 @@ r.read("POSCAR"), r.read("strain_x")
 | `metal_site` | `auto` | site of the first metal layer on the MXene grid: `A` (in-plane position of the bottom MXene layer), `B`, `C`, or `auto` (free of the top two MXene layers) |
 | `metal_stacking` | `ABC` | `ABC` climbs A → B → C (continues an MXene at 0°), `ACB` climbs A → C → B (continues one at 180°) |
 | `gap` | 2.3 | Å, top MXene layer to first metal (111) layer |
-| `shift` | [0, 0] | Å, in-plane shift of the metal along x, y, from its site |
+| `shift` | [0, 0] | Å, in-plane shift of the MXene along x, y; the metal substrate stays in place |
 | `tol` | 0.02 | largest \|strain\| on the MXene along x and y |
 | `max_replicas` | 10 | largest number of metal replicas tried per direction |
 | `model` | `mh-1` | MACE foundation model |
@@ -114,6 +114,7 @@ r.read("POSCAR"), r.read("strain_x")
 | `max_steps` | 500 | FIRE steps |
 | `fixed_layers` | 2 | outermost metal layers held fixed |
 | `relax_cell` | true | relax a, b and γ; c stays fixed |
+| `single_point` | false | MACE energy of the built structure, no ionic relaxation; `relax_cell` is then ignored, and there is no `POSCAR_relaxed` or comparison |
 | `work_of_adhesion` | false | from the rigidly separated MXene and metal |
 
 ## Outputs (`outputs.json`)

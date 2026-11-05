@@ -92,7 +92,7 @@
         <label>Max metal replicas <input id="max_replicas" type="number" step="1" min="1" max="30"></label>
         <label>Vacuum below (Å) <input id="vacuum" type="number" step="0.5" min="0"></label>
       </div>
-      <p class="hint">Metal (111) on MXene (0001), metal [1-10] along x. The gap is from the top MXene layer to the first metal (111) plane; the shift moves the metal from its site. The metal is the substrate and keeps its lattice; the MXene takes the in-plane strain.</p>
+      <p class="hint">Metal (111) on MXene (0001), metal [1-10] along x. The gap is from the top MXene layer to the first metal (111) plane; the shift slides the MXene over the metal. The metal is the substrate and keeps its lattice; the MXene takes the in-plane strain.</p>
     </section>
 
     <section>
@@ -143,6 +143,8 @@
       </div>
       <label>Fix outermost metal layers <input id="fixed_layers" type="number" step="1" min="0"></label>
       <label class="check"><input type="checkbox" id="relax_cell"> Relax in-plane cell (c stays fixed)</label>
+      <label class="check"><input type="checkbox" id="ionic_relaxation"> Ionic relaxation</label>
+      <label class="check"><input type="checkbox" id="single_point"> Single point energy</label>
       <label class="check"><input type="checkbox" id="work_of_adhesion"> Report work of adhesion</label>
       <div class="inline">
         <button type="button" class="primary" id="relaxBtn">Relax</button>

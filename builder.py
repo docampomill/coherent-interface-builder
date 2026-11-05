@@ -26,7 +26,7 @@ DEFAULTS = dict(
     metal_site="auto",   # A, B or C site of the first metal (111) layer; auto = the one free of the top two MXene layers
     metal_stacking="ABC",  # A → B → C upward (continues an MXene at 0°); ACB = A → C → B (continues one at 180°)
     gap=2.3,             # Å, top MXene layer to first metal layer
-    shift=[0.0, 0.0],    # Å, in-plane shift of the metal along x and y
+    shift=[0.0, 0.0],    # Å, in-plane shift of the MXene along x and y; the metal substrate stays
     tol=0.02,            # largest |strain| allowed on the MXene along x and along y
     max_replicas=10,     # largest number of metal replicas tried per direction
 )
@@ -207,12 +207,14 @@ def build(inputs):
         for j in range(mx_y):                          # would wrap the top layer from z = c to z = 0
             for s in mxene:                            # same fractional x, y in the strained cell = strained MXene
                 species.append(s.species_string)
-                coords.append([(i + s.frac_coords[0]) * a_s, (j + s.frac_coords[1]) * b_s, s.coords[2]])
+                coords.append([((i + s.frac_coords[0]) * a_s + shift[0]) % box_x,   # the shift slides the MXene
+                               ((j + s.frac_coords[1]) * b_s + shift[1]) % box_y, s.coords[2]])
                 layer.append(s.properties["layer"])
                 part.append("mxene")
 
-    # Bottom metal layer is on A at the origin; move it to the first site of the MXene grid, then add the shift.
-    offset = np.array(SITES[first]) * [a_s, b_s] + shift
+    # Bottom metal layer is on A at the origin; move it to the first site of the (unshifted) MXene grid. The metal is
+    # the substrate: it stays there, and the shift moves the MXene instead.
+    offset = np.array(SITES[first]) * [a_s, b_s]
     for s in metal_super:                              # the box is whole metal cells: the metal keeps its lattice
         species.append(s.species_string)
         x = (s.frac_coords[0] + offset[0] / box_x) % 1 * box_x

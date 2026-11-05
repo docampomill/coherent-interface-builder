@@ -87,8 +87,13 @@ f = dict(
     max_steps=number("max_steps", "Max steps", 10),
     fixed_layers=number("fixed_layers", "Fix outermost metal layers", 1),
     relax_cell=check("relax_cell", "Relax in-plane cell (c stays fixed)"),
+    single_point=check("single_point", "Single point energy"),
     work_of_adhesion=check("work_of_adhesion", "Report work of adhesion"),
 )
+# Ionic relaxation (atoms only, fixed cell) is neither relax_cell nor single_point, so it is not a Sim2L input
+# and stays out of f, which collect() copies into the inputs.
+ionic = w.Checkbox(value=not value("relax_cell") and not value("single_point"), description="Ionic relaxation", indent=False)
+f["relax_cell"].value = f["relax_cell"].value and not f["single_point"].value
 auto = w.Checkbox(value=True, description="Rebuild on every change", indent=False)
 build_button = w.Button(description="Build", button_style="primary", icon="cubes")
 relax_button = w.Button(description="Relax", button_style="warning", icon="play")
@@ -111,10 +116,10 @@ form = w.VBox([
     section(2, "Metal", row(f["metal"], f["metal_layers"]), row(f["metal_site"], f["metal_stacking"])),
     section(3, "Location", row(f["gap"], f["vacuum"]), row(f["shift_x"], f["shift_y"]), row(f["tol"], f["max_replicas"]),
             hint="Metal (111) on MXene (0001), metal [1-10] along x. The gap is from the top MXene layer to the first "
-                 "metal (111) plane; the shift moves the metal from its site. The metal is the substrate and keeps its lattice; the MXene takes the in-plane strain."),
+                 "metal (111) plane; the shift slides the MXene over the metal. The metal is the substrate and keeps its lattice; the MXene takes the in-plane strain."),
     w.HBox([build_button, auto]),
     section(4, "Relaxation", row(f["model"], f["head"]), f["dispersion"], row(f["fmax"], f["max_steps"]),
-            row(f["fixed_layers"]), f["relax_cell"], f["work_of_adhesion"], relax_button, relax_status, progress,
+            row(f["fixed_layers"]), f["relax_cell"], ionic, f["single_point"], f["work_of_adhesion"], relax_button, relax_status, progress,
             hint="MACE runs inside the Sim2L; a relaxation can take minutes. Runs with the same inputs come from the cache."),
 ], layout=w.Layout(flex="0 1 440px", min_width="360px", padding="0 1em 0 0"))
 
@@ -188,7 +193,14 @@ def render():
          " ".join(f"{e}{n}" for e, n in layer["species"].items()), fmt(layer["z"]),
          fmt(layer["z"] - L[layer["index"] - 1]["z"]) if layer["index"] else "–"] for layer in reversed(L)]))
     r, c = o.get("relaxation"), o.get("comparison")
-    if r:
+    if r and r.get("single_point"):                    # no relaxed structure, so no comparison
+        parts.append(table("Single point", ["", ""], [
+            ["Energy (eV)", f"{r['energy_final']:.4f}"],
+            ["fmax (eV/Å)", f"{r['fmax_final']:.4f}"],
+            ["Gap (Å)", fmt(r["gap"])],
+            ["Work of adhesion, rigid (J/m²)", fmt(r.get("work_of_adhesion"))],
+        ], "MACE energy of the built structure, no ionic relaxation."))
+    elif r:
         parts.append(table("Relaxation", ["", ""], [
             ["Converged", f"{r['converged']} after {r['n_steps']} FIRE steps, fmax {r['fmax_final']:.4f} eV/Å"],
             ["Energy (eV)", f"{r['energy_initial']:.4f} → {r['energy_final']:.4f}"],
@@ -263,7 +275,7 @@ def run(relax):
                                daemon=True)
     if relax:
         relax_status.value = f"{SPIN}<i>Loading MACE {html.escape(f['model'].value)}…</i>"
-        progress.max, progress.value, progress.layout.visibility = f["max_steps"].value, 0, "visible"
+        progress.max, progress.value, progress.layout.visibility = 1 if f["single_point"].value else f["max_steps"].value, 0, "visible"
         watcher.start()
     try:
         log, failure = StringIO(), None
@@ -305,9 +317,11 @@ def run(relax):
         status.value = ""
         if relax:
             rx, i = state["outputs"]["relaxation"], state["outputs"]["inputs"]
-            verdict = "stopped" if rx["stopped"] else "converged" if rx["converged"] else "not converged"
-            relax_status.value = (f"{i['model']} ({i['head']}){' + D3(BJ)' if i['dispersion'] else ''}: {verdict} after "
-                                  f"{rx['n_steps']} steps, E = {rx['energy_final']:.4f} eV, fmax = {rx['fmax_final']:.4f} eV/Å"
+            verdict = ("single point" if rx.get("single_point") else "stopped" if rx["stopped"] else
+                       "converged" if rx["converged"] else "not converged") + \
+                      ("" if rx.get("single_point") else f" after {rx['n_steps']} steps")
+            relax_status.value = (f"{i['model']} ({i['head']}){' + D3(BJ)' if i['dispersion'] else ''}: {verdict}, "
+                                  f"E = {rx['energy_final']:.4f} eV, fmax = {rx['fmax_final']:.4f} eV/Å"
                                   + (" (from the cache)" if r.cached else ""))
         render()
         draw()
@@ -329,6 +343,25 @@ def run(relax):
 
 
 build_button.on_click(lambda _: run(False))
+
+
+MODES = [f["relax_cell"], ionic, f["single_point"]]     # exactly one checked, like radio buttons
+
+
+def exclusive(change):
+    """Checking a mode unchecks the other two; unchecking the only checked one turns it back on."""
+    box = change["owner"]
+    if change["new"]:
+        for other in MODES:
+            if other is not box:
+                other.value = False
+    elif not any(m.value for m in MODES):
+        box.value = True
+    relax_button.description = "Compute energy" if f["single_point"].value else "Relax"
+
+
+for box in MODES:
+    box.observe(exclusive, names="value")
 relax_button.on_click(lambda _: run(True))
 for name in ("mxene", "stacking", "mxene_rotation", "metal", "metal_layers", "metal_site", "metal_stacking",
              "gap", "shift_x", "shift_y", "tol", "max_replicas", "vacuum"):

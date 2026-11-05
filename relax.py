@@ -26,6 +26,7 @@ DEFAULTS = dict(
     max_steps=500,             # FIRE steps
     fixed_layers=2,            # outermost metal layers held fixed
     relax_cell=True,           # relax a, b and γ; c stays fixed
+    single_point=False,        # MACE energy and forces of the built structure, no ionic relaxation (relax_cell ignored)
     work_of_adhesion=False,    # from the rigidly separated MXene and metal
 )
 HEADS = {"omat_pbe": "PBE(+U)", "oc20_usemppbe": "PBE slabs", "matpes_r2scan": "r²SCAN"}
@@ -60,8 +61,11 @@ def version(package):
 
 
 def relax(inputs, progress=None, should_stop=None):
-    """Build, then relax. Returns (relaxed Structure, outputs of builder.build plus "relaxation" and POSCAR_relaxed)."""
+    """Build, then relax. Returns (relaxed Structure, outputs of builder.build plus "relaxation" and POSCAR_relaxed).
+    With single_point: one energy of the built structure, no POSCAR_relaxed and no comparison."""
     p = {**DEFAULTS, **inputs}
+    if p["single_point"]:
+        p["relax_cell"] = False                        # the two are exclusive: single point wins
     structure, outputs = builder.build(inputs)
     outputs["inputs"].update({k: p[k] for k in DEFAULTS})
 
@@ -74,23 +78,32 @@ def relax(inputs, progress=None, should_stop=None):
     atoms.set_constraint(FixAtoms(indices=fixed))
     atoms.calc = calculator(p["model"], p["head"], p["dispersion"])
 
-    target = FrechetCellFilter(atoms, mask=IN_PLANE) if p["relax_cell"] else atoms
-    opt = FIRE(target, logfile=None)
     trace, converged, stopped = [], False, False
-    for converged in opt.irun(fmax=p["fmax"], steps=p["max_steps"]):
-        forces = target.get_forces()
-        trace.append(dict(step=opt.nsteps, energy=float(atoms.get_potential_energy()),
+    if p["single_point"]:
+        forces = atoms.get_forces()                    # zero on the fixed atoms: fmax is over the free ones
+        trace.append(dict(step=0, energy=float(atoms.get_potential_energy()),
                           fmax=float(np.sqrt((forces**2).sum(axis=1).max()))))
         if progress:
             progress(trace[-1])
-        if should_stop and should_stop():
-            stopped = True
-            break
+        optimizer, n_steps, converged = None, 0, None
+    else:
+        target = FrechetCellFilter(atoms, mask=IN_PLANE) if p["relax_cell"] else atoms
+        opt = FIRE(target, logfile=None)
+        for converged in opt.irun(fmax=p["fmax"], steps=p["max_steps"]):
+            forces = target.get_forces()
+            trace.append(dict(step=opt.nsteps, energy=float(atoms.get_potential_energy()),
+                              fmax=float(np.sqrt((forces**2).sum(axis=1).max()))))
+            if progress:
+                progress(trace[-1])
+            if should_stop and should_stop():
+                stopped = True
+                break
+        optimizer, n_steps, converged = "FIRE", opt.nsteps, bool(converged) and not stopped
 
     z = atoms.positions[:, 2]
     a, b, _, _, _, gamma = atoms.cell.cellpar()
-    result = dict(optimizer="FIRE", fixed_atoms=len(fixed), converged=bool(converged) and not stopped, stopped=stopped,
-                  n_steps=opt.nsteps, energy_initial=trace[0]["energy"], energy_final=float(atoms.get_potential_energy()),
+    result = dict(single_point=bool(p["single_point"]), optimizer=optimizer, fixed_atoms=len(fixed),
+                  converged=converged, stopped=stopped, n_steps=n_steps, energy_initial=trace[0]["energy"], energy_final=float(atoms.get_potential_energy()),
                   fmax_final=trace[-1]["fmax"], cell=dict(a=round(float(a), 4), b=round(float(b), 4), gamma=round(float(gamma), 3)),
                   gap=round(float(z[layers == n_mx].mean() - z[layers == n_mx - 1].mean()), 4),
                   versions={pkg: version(pkg) for pkg in ("mace-torch", "torch", "torch-dftd", "ase")}, trace=trace)
@@ -112,8 +125,9 @@ def relax(inputs, progress=None, should_stop=None):
     relaxed = Structure(atoms.cell[:], atoms.get_chemical_symbols(), atoms.positions, coords_are_cartesian=True,
                         to_unit_cell=False, site_properties=structure.site_properties)
     outputs["relaxation"] = result
-    outputs["comparison"] = compare(structure, relaxed)
-    outputs["files"]["POSCAR_relaxed"] = relaxed.get_sorted_structure().to(fmt="poscar")
+    if not p["single_point"]:                          # a single point would only repeat the built structure
+        outputs["comparison"] = compare(structure, relaxed)
+        outputs["files"]["POSCAR_relaxed"] = relaxed.get_sorted_structure().to(fmt="poscar")
     return relaxed, outputs
 
 
@@ -166,6 +180,11 @@ if __name__ == "__main__":
     for name, text in outputs["files"].items():
         Path(name).write_text(text)
     Path("outputs.json").write_text(json.dumps(outputs, indent=2) + "\n")
+    if "comparison" not in outputs:
+        r = outputs["relaxation"]
+        print(f"single point: E = {r['energy_final']:.6f} eV, fmax = {r['fmax_final']:.4f} eV/Å"
+              + (f", work of adhesion {r['work_of_adhesion']} J/m²" if "work_of_adhesion" in r else ""))
+        sys.exit()
     c = outputs["comparison"]
     print(f"max |Δr| {c['max_displacement']['norm']:.3f} Å ({c['max_displacement']['species']} #{c['max_displacement']['atom']}), "
           f"RMS {c['rms_displacement']:.3f} Å, gap {c['gap']['initial']:.3f} → {c['gap']['relaxed']:.3f} Å")

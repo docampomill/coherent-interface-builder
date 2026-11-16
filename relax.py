@@ -5,6 +5,7 @@
 import functools
 import json
 import sys
+import threading
 from importlib import metadata
 from pathlib import Path
 
@@ -28,12 +29,16 @@ DEFAULTS = dict(
     relax_cell=True,           # relax a, b and γ; c stays fixed
     single_point=False,        # MACE energy and forces of the built structure, no ionic relaxation (relax_cell ignored)
     work_of_adhesion=False,    # from the rigidly separated MXene and metal
+    optimize_metal=False,      # run every metal_site (A, B, C) × metal_stacking (ABC, ACB) and keep the lowest energy
 )
 HEADS = {"omat_pbe": "PBE(+U)", "oc20_usemppbe": "PBE slabs", "matpes_r2scan": "r²SCAN"}
 MH_URLS = {name: f"https://github.com/ACEsuit/mace-foundations/releases/download/mace_mh_1/mace-{name}.model"
            for name in ("mh-0", "mh-1")}                # for mace-torch versions that do not know the MH names
 IN_PLANE = [True, True, False, False, False, True]     # FrechetCellFilter mask: a, b, γ relax; c fixed
 EV_PER_A2_TO_J_PER_M2 = 16.021766
+METAL_CANDIDATES = [(site, stacking) for stacking in ("ABC", "ACB") for site in "ABC"]   # optimize_metal
+AUTO_VACUUM, AUTO_FMAX, AUTO_STEPS = 20.0, 0.01, 500   # free MXene of stacking_energies
+auto_lock = threading.Lock()                           # one calculator, shared by the web app's threads
 
 
 @functools.lru_cache(maxsize=2)
@@ -53,6 +58,31 @@ def calculator(model, head, dispersion):
     return SumCalculator([calc, d3])
 
 
+@functools.lru_cache(maxsize=64)
+def stacking_energies(mxene, model, head, dispersion):
+    """MACE energies of the free-standing MXene (no metal) in AβC and AβA: each ionically relaxed (FIRE, fixed cell
+    at the spreadsheet a, 20 Å vacuum) in its a × √3a cell. Both cells hold the same atoms, so the energies compare
+    directly; the lower one is "chosen". Used by builder.build for stacking = auto."""
+    with auto_lock:
+        calc = calculator(model, head, dispersion)
+        energies, converged, n_steps = {}, {}, {}
+        for stacking in ("ABC", "ABA"):
+            structure = builder.mxene_cell(mxene, stacking, vacuum=AUTO_VACUUM)[0]
+            atoms = Atoms([s.species_string for s in structure], positions=structure.cart_coords,
+                          cell=structure.lattice.matrix, pbc=True)
+            atoms.calc = calc
+            opt = FIRE(atoms, logfile=None)
+            converged[stacking] = bool(opt.run(fmax=AUTO_FMAX, steps=AUTO_STEPS))
+            n_steps[stacking] = opt.nsteps
+            energies[stacking] = float(atoms.get_potential_energy())
+    n_fu = 2                                           # the rectangular cell holds two formula units
+    per_fu = {s: round(e / n_fu, 6) for s, e in energies.items()}
+    return dict(chosen=min(energies, key=energies.get), energies={s: round(e, 6) for s, e in energies.items()},
+                per_formula_unit=per_fu, delta_per_formula_unit=round(per_fu["ABA"] - per_fu["ABC"], 6),
+                converged=converged, n_steps=n_steps, n_atoms=len(atoms), model=model, head=head, dispersion=dispersion,
+                method=f"free-standing MXene, ionic relaxation (FIRE, fmax {AUTO_FMAX} eV/Å) at the spreadsheet a")
+
+
 def version(package):
     try:
         return metadata.version(package)
@@ -62,8 +92,11 @@ def version(package):
 
 def relax(inputs, progress=None, should_stop=None):
     """Build, then relax. Returns (relaxed Structure, outputs of builder.build plus "relaxation" and POSCAR_relaxed).
-    With single_point: one energy of the built structure, no POSCAR_relaxed and no comparison."""
+    With single_point: one energy of the built structure, no POSCAR_relaxed and no comparison.
+    With optimize_metal: the run of lowest energy over the metal placements (optimize_metal), with outputs["metal_scan"]."""
     p = {**DEFAULTS, **inputs}
+    if p["optimize_metal"]:
+        return optimize_metal(inputs, progress, should_stop)
     if p["single_point"]:
         p["relax_cell"] = False                        # the two are exclusive: single point wins
     structure, outputs = builder.build(inputs)
@@ -131,6 +164,37 @@ def relax(inputs, progress=None, should_stop=None):
     return relaxed, outputs
 
 
+def optimize_metal(inputs, progress=None, should_stop=None):
+    """Every first metal layer site (A, B, C) with every metal stacking (ABC, ACB), each run in the relaxation mode of
+    inputs (single point, ionic or with the cell). All six hold the same atoms in the same box, so their energies
+    compare directly. Returns relax() of the lowest one; its inputs carry the chosen metal_site and metal_stacking
+    (optimize_metal off), and outputs["metal_scan"] lists every candidate. A stop keeps the candidates already done."""
+    runs = []
+    for i, (site, stacking) in enumerate(METAL_CANDIDATES):
+        tag = dict(candidate=i + 1, of=len(METAL_CANDIDATES), metal_site=site, metal_stacking=stacking)
+        run = relax({**inputs, "optimize_metal": False, "metal_site": site, "metal_stacking": stacking},
+                    progress=progress and (lambda s: progress({**s, **tag})), should_stop=should_stop)
+        runs.append(run)
+        if run[1]["relaxation"]["stopped"]:
+            break
+    done = [run for run in runs if not run[1]["relaxation"]["stopped"]] or runs
+    relaxed, outputs = min(done, key=lambda run: run[1]["relaxation"]["energy_final"])
+    e_min = outputs["relaxation"]["energy_final"]
+    area = outputs["interface"]["box"][0] * outputs["interface"]["box"][1]
+    outputs["metal_scan"] = dict(
+        mode="single point" if outputs["relaxation"]["single_point"] else
+             "ionic + in-plane cell" if outputs["inputs"]["relax_cell"] else "ionic",
+        chosen=dict(metal_site=outputs["inputs"]["metal_site"], metal_stacking=outputs["inputs"]["metal_stacking"]),
+        stopped=len(done) < len(METAL_CANDIDATES), area=round(area, 4),
+        candidates=[dict(metal_site=o["inputs"]["metal_site"], metal_stacking=o["inputs"]["metal_stacking"],
+                         sites=o["metal"]["sites"], energy=o["relaxation"]["energy_final"],
+                         delta=round(o["relaxation"]["energy_final"] - e_min, 6),
+                         delta_per_area=round((o["relaxation"]["energy_final"] - e_min) / area * EV_PER_A2_TO_J_PER_M2, 5),
+                         converged=o["relaxation"]["converged"], stopped=o["relaxation"]["stopped"],
+                         gap=o["relaxation"]["gap"]) for _, o in runs])
+    return relaxed, outputs
+
+
 def compare(initial, relaxed, top=15):
     """Built vs relaxed structure (same atom order): displacements, layer heights and spacings, gap and cell."""
     layers = np.array(initial.site_properties["layer"])
@@ -180,6 +244,10 @@ if __name__ == "__main__":
     for name, text in outputs["files"].items():
         Path(name).write_text(text)
     Path("outputs.json").write_text(json.dumps(outputs, indent=2) + "\n")
+    if "metal_scan" in outputs:
+        for k in outputs["metal_scan"]["candidates"]:
+            print(f"metal {k['metal_site']} {k['metal_stacking']}: E = {k['energy']:.6f} eV, ΔE = {k['delta']:.4f} eV")
+        print("lowest:", outputs["metal_scan"]["chosen"])
     if "comparison" not in outputs:
         r = outputs["relaxation"]
         print(f"single point: E = {r['energy_final']:.6f} eV, fmax = {r['fmax_final']:.4f} eV/Å"

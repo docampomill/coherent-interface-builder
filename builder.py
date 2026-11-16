@@ -86,19 +86,13 @@ MXENES, METALS = read_spreadsheet()
 SHA256 = hashlib.sha256(SPREADSHEET.read_bytes()).hexdigest()
 
 
-def build(inputs):
-    """inputs: dict, missing keys take DEFAULTS. Returns (interface Structure, outputs dict)."""
-    p = {**DEFAULTS, **inputs}
-    if p["mxene"] not in MXENES or p["metal"] not in METALS:
-        raise ValueError(f"{p['mxene']} or {p['metal']} is not a row of {SPREADSHEET.name}")
-    if p["metal_site"] not in ("auto", *SITES) or p["metal_stacking"] not in NEXT:
-        raise ValueError("metal_site is auto, A, B or C; metal_stacking is ABC or ACB")
-    if p["mxene_rotation"] not in (0, 180):
-        raise ValueError("mxene_rotation is 0 or 180")
-
-    # ---------------- MXene: conventional (orthogonal) cell, vacuum only below ----------------
-    row = MXENES[p["mxene"]]
-    a, vac = row["a"], p["vacuum"]
+def mxene_cell(mxene, stacking, rotation=0, vacuum=DEFAULTS["vacuum"]):
+    """Conventional (orthogonal) a × √3a × c cell of a spreadsheet MXene, vacuum only below, top layer at z = c.
+    Returns (Structure with a "layer" site property, layers, sites, heights above the bottom layer, c)."""
+    if stacking not in ("ABC", "ABA"):
+        raise ValueError("stacking is ABC, ABA or auto")
+    row = MXENES[mxene]
+    a = row["a"]
     layers = mxene_layers(row["formula"])
 
     # AβC: sites cycle A → B → C; AβA: metals on one site, C/N on the next. O sits on the site free of its two
@@ -106,7 +100,7 @@ def build(inputs):
     # Turning the MXene 180° about z keeps A and swaps B ↔ C: (0, 1/3) → (0, -1/3) ≡ (1/2, 1/6).
     core = [i for i, e in enumerate(layers) if e != "O"]
     centre = (core[0] + core[-1]) // 2
-    sites = [None if e == "O" else "ABC"[(i - centre) % 3] if p["stacking"] == "ABC" else "B" if e in ("C", "N") else "A"
+    sites = [None if e == "O" else "ABC"[(i - centre) % 3] if stacking == "ABC" else "B" if e in ("C", "N") else "A"
              for i, e in enumerate(layers)]
     if layers[0] == "O":
         sites[0] = ({"A", "B", "C"} - {sites[1], sites[2]}).pop()
@@ -114,23 +108,49 @@ def build(inputs):
         sites[-1] = ({"A", "B", "C"} - {sites[-2], sites[-3]}).pop()
     k = "ABC".index(sites[0])
     sites = ["ABC"[("ABC".index(s) - k) % 3] for s in sites]
-    if p["mxene_rotation"] == 180:
+    if rotation == 180:
         sites = [{"A": "A", "B": "C", "C": "B"}[s] for s in sites]
 
     heights = [0.0]                                    # above the bottom layer, Å
     for lower, upper in zip(layers, layers[1:]):
         heights.append(heights[-1] + (math.sqrt(BOND_MO**2 - a**2 / 3) if "O" in (lower, upper) else D_MX * a))
 
-    c = heights[-1] + vac                              # top layer sits exactly at z = c
+    c = heights[-1] + vacuum                           # top layer sits exactly at z = c
     lattice = Lattice.orthorhombic(a, np.sqrt(3) * a, c)
     species, coords, layer = [], [], []
     for i, (s, site, h) in enumerate(zip(layers, sites, heights)):
         x, y = SITES[site]
         for dx, dy in [(0, 0), (0.5, 0.5)]:            # the rectangular cell holds two copies of each layer
             species.append(s)
-            coords.append([(x + dx) % 1, (y + dy) % 1, (vac + h) / c])
+            coords.append([(x + dx) % 1, (y + dy) % 1, (vacuum + h) / c])
             layer.append(i)
-    mxene = Structure(lattice, species, coords, to_unit_cell=False, site_properties={"layer": layer})
+    structure = Structure(lattice, species, coords, to_unit_cell=False, site_properties={"layer": layer})
+    return structure, layers, sites, heights, c
+
+
+def build(inputs):
+    """inputs: dict, missing keys take DEFAULTS. Returns (interface Structure, outputs dict).
+    stacking = auto takes the MXene stacking (AβC or AβA) of lower MACE energy (relax.stacking_energies)."""
+    p = {**DEFAULTS, **inputs}
+    if p["mxene"] not in MXENES or p["metal"] not in METALS:
+        raise ValueError(f"{p['mxene']} or {p['metal']} is not a row of {SPREADSHEET.name}")
+    if p["metal_site"] not in ("auto", *SITES) or p["metal_stacking"] not in NEXT:
+        raise ValueError("metal_site is auto, A, B or C; metal_stacking is ABC or ACB")
+    if p["mxene_rotation"] not in (0, 180):
+        raise ValueError("mxene_rotation is 0 or 180")
+    if p["stacking"] not in ("ABC", "ABA", "auto"):
+        raise ValueError("stacking is ABC, ABA or auto")
+
+    # ---------------- MXene: conventional (orthogonal) cell, vacuum only below ----------------
+    auto = None
+    if p["stacking"] == "auto":                        # MACE on the free MXene; imported here so plain builds need no MACE
+        import relax
+        auto = json.loads(json.dumps(relax.stacking_energies(   # a copy: the cached result must not change
+            p["mxene"], *(p.get(k, relax.DEFAULTS[k]) for k in ("model", "head", "dispersion")))))
+    stacking = auto["chosen"] if auto else p["stacking"]
+    row = MXENES[p["mxene"]]
+    a = row["a"]
+    mxene, layers, sites, heights, c = mxene_cell(p["mxene"], stacking, p["mxene_rotation"], p["vacuum"])
 
     # ---------------- Metal: conventional cubic cell from its space group ----------------
     metal_row = METALS[p["metal"]]
@@ -243,10 +263,10 @@ def build(inputs):
         rotation[1] *= -1
     outputs = dict(
         inputs=p,
-        mxene=dict(**row, stacking=p["stacking"], rotation=p["mxene_rotation"], layers=layers, sites=sites,
+        mxene=dict(**row, stacking=stacking, rotation=p["mxene_rotation"], layers=layers, sites=sites,
                    cell=[r(a), r(np.sqrt(3) * a), r(c)], strained_cell=[r(a_s), r(b_s), r(c)],
                    matrix=(np.diag([turn * a_s, turn * b_s, c]).round(4) + 0.0).tolist(),  # strained cell vectors, interface frame
-                   thickness=r(heights[-1])),
+                   thickness=r(heights[-1]), **({"stacking_auto": auto} if auto else {})),
         metal=dict(**metal_row, space_group=f"{symbol} ({number})", layers=n_layers, d111=r(d111),
                    orientation="(111) ∥ MXene (0001), [1-10] ∥ x, [11-2] ∥ y", stacking=p["metal_stacking"],
                    sites=metal_sites, cell=[r(v) for v in oriented.lattice.abc],

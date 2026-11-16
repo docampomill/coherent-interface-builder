@@ -67,6 +67,7 @@ label.check { flex-direction: row; align-items: center; gap: 7px; font-size: 14p
 .hint { margin: 0; font-size: 13px; color: var(--graphite); }
 
 fieldset.seg { border: 0; padding: 0; margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+fieldset.seg.three { grid-template-columns: 1fr 1fr 1fr; }
 fieldset.seg legend { font-size: 13px; color: var(--graphite); padding: 0 0 3px; }
 .seg label { position: relative; flex-direction: column; gap: 0; align-items: center; padding: 6px 4px; cursor: pointer;
              border: 1px solid var(--rule); margin-left: -1px; color: var(--ink); }

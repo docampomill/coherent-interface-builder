@@ -8,7 +8,7 @@ const color = (e) => "#" + ($3Dmol.elementColors.Jmol[e] ?? 0x999999).toString(1
 const fmt = (v, d = 3) => (v === null || v === undefined ? "–" : Number(v).toFixed(d));
 const pct = (v) => `${v >= 0 ? "+" : "−"}${Math.abs(100 * v).toFixed(2)} %`;
 
-const state = { last: null, planes: null, plane: 0, result: null, relaxed: null, show: "built" };   // result: last MACE job; relaxed: same, if it relaxed
+const state = { last: null, planes: null, plane: 0, result: null, relaxed: null, show: "built", auto: null };   // auto: last stacking = auto result   // result: last MACE job; relaxed: same, if it relaxed
 const RELAX_IDS = ["model", "head", "dispersion", "fmax", "max_steps", "fixed_layers", "relax_cell", "ionic_relaxation", "single_point", "work_of_adhesion"];
 // Relaxation modes, exactly one checked: a single point (the default), atoms only, or atoms + in-plane cell. The
 // backend has single_point and relax_cell; ionic relaxation is neither of them.
@@ -103,14 +103,28 @@ function applyInputs(given) {
 /* ---------- build ---------- */
 
 const rebuild = debounce(async () => {
+  const auto = radio("stacking") === "auto";
+  $("stackingAuto").hidden = !auto;
+  if (auto) $("stackingAuto").textContent = "Relaxing AβC and AβA of the free MXene with MACE…";
   try {
     state.last = await api("/api/build", { inputs: collectInputs() });
     showError("");
   } catch (err) {
     showError(err.message);
+    if (auto) $("stackingAuto").textContent = "";
     return;
   }
+  await showBuilt();
+}, 200);
+
+// Draws a build (state.last): the readout, tables and viewer.
+async function showBuilt() {
   const o = state.last.outputs;
+  if (o.mxene.stacking_auto) {                    // select the stacking it found; no rebuild, the structure has it
+    state.auto = { ...o.mxene.stacking_auto, mxene: o.mxene.formula };
+    document.querySelector(`input[name=stacking][value=${o.mxene.stacking}]`).checked = true;
+  }
+  renderStackingAuto(o);
   $("mxeneSource").textContent = `a = ${o.mxene.a} Å (${o.mxene.family}, termination ${o.mxene.termination}; ${o.mxene.source}).`;
   $("metalSource").textContent = `${o.metal.name}, ${o.metal.structure} ${o.metal.space_group}, a = ${o.metal.a} Å, a₁₁₁ = ${fmt(o.metal.a111, 4)} Å, d₁₁₁ = ${fmt(o.metal.d111, 4)} Å (${o.metal.source}).`;
   renderReadout(o);
@@ -118,7 +132,20 @@ const rebuild = debounce(async () => {
   renderLayers(o);
   renderFiles(o);
   if (state.planes) await loadPlanes(); else draw();
-}, 200);
+}
+
+// stacking = auto: both stackings of the free MXene, relaxed with MACE (relax.stacking_energies). Shown while
+// the MXene and the stacking it chose stay selected.
+function renderStackingAuto(o) {
+  const a = state.auto;
+  const shown = a && a.mxene === o.mxene.formula && a.chosen === o.mxene.stacking;
+  $("stackingAuto").hidden = !shown;
+  if (!shown) return;
+  const name = (s) => (s === "ABC" ? "AβC" : "AβA");
+  const e = a.per_formula_unit;
+  $("stackingAuto").textContent = `${name(a.chosen)} chosen. Free MXene, ionically relaxed: AβC ${fmt(e.ABC, 4)}, AβA ${fmt(e.ABA, 4)} eV per formula unit `
+    + `(AβA − AβC = ${fmt(a.delta_per_formula_unit, 4)} eV; ${a.model}, ${a.head}${a.dispersion ? " + D3(BJ)" : ""}).`;
+}
 
 // The viewer shows the built structure (with planes, if any), the relaxed one, the relaxed one over the
 // faded built one, or both side by side.
@@ -237,22 +264,24 @@ function clearRelaxed() {
   state.result = state.relaxed = null;
   $("relaxPanel").hidden = true;
   $("comparePanel").hidden = true;
+  $("metalScan").hidden = true;
   $("relaxStatus").textContent = "";
   document.querySelectorAll("[data-show]:not([data-show=built])").forEach((b) => { b.disabled = true; });
   if (state.last) renderFiles(state.last.outputs);
   if (state.show !== "built") setShow("built");
 }
 
-async function startRelax() {
+// optimize: the metal placement scan of relax.optimize_metal, a job like a relaxation.
+async function startRelax(optimize = false) {
   clearRelaxed();
   try {
-    await api("/api/relax", { inputs: collectInputs() });
+    await api("/api/relax", { inputs: { ...collectInputs(), optimize_metal: optimize } });
     showError("");
   } catch (err) {
     showError(err.message);
     return;
   }
-  $("relaxBtn").disabled = true;
+  $("relaxBtn").disabled = $("optimizeMetalBtn").disabled = true;
   $("stopBtn").hidden = false;
   $("relaxStatus").textContent = `Loading MACE ${collectInputs().model}…`;
   let seen = 0;
@@ -261,12 +290,21 @@ async function startRelax() {
     const job = await (await fetch(`/api/relax?since=${seen}`)).json();
     seen = job.n_events;
     const last = job.events.at(-1);
-    if (last) $("relaxStatus").textContent = `Step ${last.step} · E = ${fmt(last.energy, 4)} eV · fmax = ${fmt(last.fmax, 4)} eV/Å`;
+    if (last) $("relaxStatus").textContent = (last.candidate ? `Placement ${last.candidate}/${last.of}: ${last.metal_site}, ${last.metal_stacking} · ` : "")
+      + `Step ${last.step} · E = ${fmt(last.energy, 4)} eV · fmax = ${fmt(last.fmax, 4)} eV/Å`;
     if (job.state === "running") continue;
-    $("relaxBtn").disabled = false;
+    $("relaxBtn").disabled = $("optimizeMetalBtn").disabled = false;
     $("stopBtn").hidden = true;
     if (job.state === "error") { showError(job.error); $("relaxStatus").textContent = ""; return; }
     state.result = job.result;
+    if (job.result.outputs.metal_scan) {            // select the placement it kept and show its built structure
+      const chosen = job.result.outputs.metal_scan.chosen;
+      $("metal_site").value = chosen.metal_site;
+      $("metal_stacking").value = chosen.metal_stacking;
+      state.last = { outputs: job.result.outputs, structure: job.result.initial };
+      await showBuilt();
+      renderMetalScan(job.result.outputs.metal_scan);
+    }
     renderRelaxation(job.result.outputs);
     renderFiles(job.result.outputs);
     if (job.result.outputs.comparison) {            // a single point has no relaxed structure to show
@@ -277,6 +315,17 @@ async function startRelax() {
     }
     return;
   }
+}
+
+function renderMetalScan(scan) {
+  const arrow = (s) => (s === "ABC" ? "A → B → C" : "A → C → B");
+  $("metalScanRows").replaceChildren(...scan.candidates.map((c) => h("tr",
+    { class: c.metal_site === scan.chosen.metal_site && c.metal_stacking === scan.chosen.metal_stacking ? "selected" : null },
+    h("td", {}, c.metal_site), h("td", {}, arrow(c.metal_stacking)), h("td", {}, c.sites.join(" ")),
+    h("td", { class: "num" }, fmt(c.energy, 4)), h("td", { class: "num" }, fmt(c.delta, 4)), h("td", { class: "num" }, fmt(c.delta_per_area, 3)))));
+  $("metalScanNote").textContent = `${scan.mode}${scan.stopped ? `; stopped after ${scan.candidates.length} of 6, lowest of those finished selected` : ""}. `
+    + "ΔE is from the lowest; per interface area " + `${fmt(scan.area, 2)} Å².`;
+  $("metalScan").hidden = false;
 }
 
 function renderRelaxation(o) {
@@ -492,8 +541,10 @@ $("form").addEventListener("input", (ev) => {
   if (["ph", "pk", "pl", "load"].includes(t.id) || t.name === "plane") return;
   if (t.name === "plane_part") { if (state.planes) { state.plane = 0; loadPlanes(); } return; }
   clearRelaxed();
-  if (!RELAX_IDS.includes(t.id)) rebuild();
+  // The MACE settings change the build only through stacking = auto (the model name once it is committed, below).
+  if (!RELAX_IDS.includes(t.id) || (["head", "dispersion"].includes(t.id) && radio("stacking") === "auto")) rebuild();
 });
+$("model").addEventListener("change", () => { if (radio("stacking") === "auto") rebuild(); });
 
 document.querySelectorAll("[data-view]").forEach((b) =>
   b.addEventListener("click", () => { press("view", b.dataset.view); Viewer.orient(b.dataset.view); }));
@@ -512,7 +563,8 @@ $("hidePlanes").addEventListener("click", hidePlanes);
 $("showCell").addEventListener("change", () => Viewer.redraw());
 document.querySelectorAll("[data-show]").forEach((b) => b.addEventListener("click", () => setShow(b.dataset.show)));
 $("arrowScale").addEventListener("change", draw);
-$("relaxBtn").addEventListener("click", startRelax);
+$("relaxBtn").addEventListener("click", () => startRelax());
+$("optimizeMetalBtn").addEventListener("click", () => startRelax(true));
 for (const id of MODES) $(id).addEventListener("change", () => {     // like radio buttons: the clicked one stays checked
   for (const other of MODES) $(other).checked = other === id;
   relaxLabel();

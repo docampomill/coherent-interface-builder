@@ -60,9 +60,11 @@ def api_planes():
 def run_relaxation(j, inputs):
     try:
         structure, outputs = relax.relax(inputs, progress=j["events"].append, should_stop=j["stop"].is_set)
-        initial, _ = builder.build(inputs)             # same atom order as the relaxed structure
+        initial, _ = builder.build(outputs["inputs"])  # same atom order as the relaxed structure; with
+                                                       # optimize_metal, the inputs of the placement it kept
         j["result"] = dict(outputs=outputs, structure=structure_json(structure), initial=structure_json(initial))
-        j["state"] = "stopped" if outputs["relaxation"]["stopped"] else "done"
+        stopped = outputs["relaxation"]["stopped"] or outputs.get("metal_scan", {}).get("stopped")
+        j["state"] = "stopped" if stopped else "done"
     except Exception as exc:
         j["error"], j["state"] = f"{type(exc).__name__}: {exc}", "error"
 

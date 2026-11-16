@@ -38,11 +38,13 @@
           {% endfor %}
         </select>
       </label>
-      <fieldset class="seg">
+      <fieldset class="seg three">
         <legend>Stacking</legend>
+        <label><input type="radio" name="stacking" value="auto"><span>Auto</span><small>lowest MACE energy</small></label>
         <label><input type="radio" name="stacking" value="ABC" checked><span>A<i>β</i>C</span><small>octahedral</small></label>
         <label><input type="radio" name="stacking" value="ABA"><span>A<i>β</i>A</span><small>trigonal prismatic</small></label>
       </fieldset>
+      <p class="hint" id="stackingAuto" hidden></p>
       <fieldset class="seg">
         <legend>Orientation about z</legend>
         <label><input type="radio" name="mxene_rotation" value="0" checked><span>0°</span><small>C right of A</small></label>
@@ -78,6 +80,17 @@
             <option value="ACB">A → C → B · continues an MXene at 180°</option>
           </select>
         </label>
+      </div>
+      <div class="inline">
+        <button type="button" class="primary" id="optimizeMetalBtn">Optimize metal position</button>
+      </div>
+      <p class="hint">Tries the first layer on A, B and C with each stacking, A → B → C and A → C → B, in the mode and with the MACE settings of section 5, then selects the lowest energy.</p>
+      <div id="metalScan" hidden>
+        <table class="planes scan">
+          <thead><tr><th>Site</th><th>Stacking</th><th>Layers</th><th class="num">E (eV)</th><th class="num">ΔE (eV)</th><th class="num">ΔE (J/m²)</th></tr></thead>
+          <tbody id="metalScanRows"></tbody>
+        </table>
+        <p class="hint" id="metalScanNote"></p>
       </div>
       <p class="hint" id="metalSource"></p>
     </section>

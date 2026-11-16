@@ -71,7 +71,8 @@ def check(name, label):
 # ---------- inputs, in the sections of the web app ----------
 f = dict(
     mxene=choice("mxene", "MXene"),
-    stacking=toggle("stacking", "Stacking", [("AβC · octahedral", "ABC"), ("AβA · trigonal prismatic", "ABA")]),
+    stacking=toggle("stacking", "Stacking", [("Auto · lowest MACE energy", "auto"), ("AβC · octahedral", "ABC"),
+                                             ("AβA · trigonal prismatic", "ABA")]),
     mxene_rotation=toggle("mxene_rotation", "Orientation about z", [("0° · C right of A", 0), ("180° · B ↔ C", 180)]),
     metal=choice("metal", "Metal", layout=HALF),
     metal_layers=number("metal_layers", "Layers, (111) planes", 1),
@@ -103,6 +104,9 @@ f["single_point"].value, f["relax_cell"].value = True, False     # the form open
 auto = w.Checkbox(value=True, description="Rebuild on every change", indent=False)
 build_button = w.Button(description="Build", button_style="primary", icon="cubes")
 relax_button = w.Button(description="Compute energy", button_style="warning", icon="play")
+optimize_button = w.Button(description="Optimize metal position", button_style="primary", icon="search",
+                           layout=w.Layout(width="auto"))
+scan_view = w.HTML()                                   # the placements of the last optimize_metal run
 status = w.HTML()
 relax_status = w.HTML()
 progress = w.IntProgress(min=0, max=1, layout=w.Layout(width="100%", visibility="hidden"))
@@ -119,7 +123,9 @@ def section(step, title, *children, hint=None):
 row = lambda *c: w.HBox(c, layout=w.Layout(justify_content="space-between", flex_flow="row wrap"))
 form = w.VBox([
     section(1, "MXene", f["mxene"], f["stacking"], f["mxene_rotation"]),
-    section(2, "Metal", row(f["metal"], f["metal_layers"]), row(f["metal_site"], f["metal_stacking"])),
+    section(2, "Metal", row(f["metal"], f["metal_layers"]), row(f["metal_site"], f["metal_stacking"]), optimize_button,
+            scan_view, hint="Optimize tries the first layer on A, B and C with each stacking, in the mode and with the MACE "
+                            "settings of the Relaxation section, then selects the lowest energy."),
     section(3, "Location", row(f["gap"], f["vacuum"]), row(f["shift_x"], f["shift_y"]), row(f["tol"], f["max_replicas"]),
             hint="Metal (111) on MXene (0001), metal [1-10] along x. The gap is from the top MXene layer to the first "
                  "metal (111) plane; the shift slides the MXene over the metal. The metal is the substrate and keeps its lattice; the MXene takes the in-plane strain."),
@@ -141,14 +147,16 @@ viewer = w.Image(format="png", layout=w.Layout(width="100%", height="auto"))    
 tables, files = w.HTML(), w.HTML()
 results = w.VBox([readout, w.HBox([view, repeat]), w.HBox([show, show_cell]), viewer, tables, files],
                  layout=w.Layout(flex="1 1 560px", min_width="0"))
-state = dict(outputs=None, built=None, relaxed=None)
+state = dict(outputs=None, built=None, relaxed=None, auto=None)     # auto: last stacking = auto result, with its MXene
+quiet = dict(stacking=False)                                         # selecting the stacking auto found: no rebuild
 
 
-def collect(relax):
+def collect(relax, optimize=False):
     inputs = getSimToolInputs(loc)
     for name, widget in f.items():
         getattr(inputs, name).value = widget.value
     inputs.run_relaxation.value = relax
+    inputs.optimize_metal.value = optimize
     return inputs
 
 
@@ -175,6 +183,18 @@ pct = lambda v: f"{100 * v:+.2f} %".replace("-", "−")
 chip = lambda text: f"<span style='background:#e8eef5;border-radius:1em;padding:0.1em 0.7em;margin-right:0.3em'>{text}</span>"
 
 
+def scan_table(scan):
+    """The placements of an optimize_metal run, the kept one marked."""
+    arrow = {"ABC": "A → B → C", "ACB": "A → C → B"}
+    rows = [[c["metal_site"] + (" · kept" if c["metal_site"] == scan["chosen"]["metal_site"] and
+                                c["metal_stacking"] == scan["chosen"]["metal_stacking"] else ""),
+             arrow[c["metal_stacking"]], " ".join(c["sites"]), f"{c['energy']:.4f}", f"{c['delta']:.4f}",
+             f"{c['delta_per_area']:.3f}"] for c in scan["candidates"]]
+    note = f"{scan['mode']}" + (f"; stopped after {len(rows)} of 6, lowest of those finished kept" if scan["stopped"] else "") + \
+           f". ΔE is from the lowest; per interface area {scan['area']:.2f} Å²."
+    return table("Metal placements", ["Site", "Stacking", "Layers", "E (eV)", "ΔE (eV)", "ΔE (J/m²)"], rows, note)
+
+
 def render():
     o = state["outputs"]
     mx, mt, it, m = o["mxene"], o["metal"], o["interface"], o["match"]
@@ -198,6 +218,14 @@ def render():
          f"({label(list(layer['species'])[0], layer['site'])})",
          " ".join(f"{e}{n}" for e, n in layer["species"].items()), fmt(layer["z"]),
          fmt(layer["z"] - L[layer["index"] - 1]["z"]) if layer["index"] else "–"] for layer in reversed(L)]))
+    a = state["auto"]                                  # shown while the MXene and the stacking auto chose stay selected
+    if a and a["mxene"] == mx["formula"] and a["chosen"] == mx["stacking"]:                                              # stacking = auto: the free MXene in both stackings
+        name = {"ABC": "AβC", "ABA": "AβA"}
+        parts.append(table("Stacking, auto", ["", "Energy (eV/f.u.)", "Converged", "FIRE steps"], [
+            [name[s] + (" · chosen" if s == a["chosen"] else ""), f"{a['per_formula_unit'][s]:.4f}", a["converged"][s],
+             a["n_steps"][s]] for s in ("ABC", "ABA")],
+            f"Free-standing MXene (no metal), ionically relaxed at the spreadsheet a with {html.escape(a['model'])} "
+            f"({a['head']}{' + D3(BJ)' if a['dispersion'] else ''}); AβA − AβC = {a['delta_per_formula_unit']:.4f} eV/f.u."))
     r, c = o.get("relaxation"), o.get("comparison")
     if r and r.get("single_point"):                    # no relaxed structure, so no comparison
         parts.append(table("Single point", ["", ""], [
@@ -262,8 +290,10 @@ def watch(path, done, start):
             s = json.loads(lines[-1])
         except (IndexError, ValueError):                       # nothing yet, or a line half written
             continue
-        progress.value = min(s["step"], progress.max)
-        relax_status.value = (f"Step {s['step']} · E = {s['energy']:.4f} eV · fmax = {s['fmax']:.4f} eV/Å"
+        per = progress.max // s.get("of", 1)           # optimize_metal: the bar runs over every placement
+        progress.value = min((s.get("candidate", 1) - 1) * per + min(s["step"], per), progress.max)
+        relax_status.value = ((f"Placement {s['candidate']}/{s['of']}: {s['metal_site']}, {s['metal_stacking']} · " if "candidate" in s else "")
+                              + f"Step {s['step']} · E = {s['energy']:.4f} eV · fmax = {s['fmax']:.4f} eV/Å"
                               f" · {time.time() - start:.0f} s")
 
 
@@ -279,9 +309,10 @@ class InputError(Exception):
     """The Sim2L rejected the inputs (a ValueError in builder.py), e.g. no match within the tolerance."""
 
 
-def run(relax):
-    build_button.disabled = relax_button.disabled = True
-    status.value = "" if relax else f"{SPIN}<i>Building…</i>"
+def run(relax, optimize=False):
+    build_button.disabled = relax_button.disabled = optimize_button.disabled = True
+    scan_view.value = ""
+    status.value = "" if relax else f"{SPIN}<i>Building{' (relaxing AβC and AβA of the free MXene with MACE)' if f['stacking'].value == 'auto' else ''}…</i>"
     LOG.unlink(missing_ok=True)                            # written again if this run fails
     name, done = uuid.uuid4().hex, threading.Event()       # the run folder is RUNS/<name>, so it can be watched;
                                                            # absolute, as papermill changes directory into it
@@ -289,7 +320,8 @@ def run(relax):
                                daemon=True)
     if relax:
         relax_status.value = f"{SPIN}<i>Loading MACE {html.escape(f['model'].value)}…</i>"
-        progress.max, progress.value, progress.layout.visibility = 1 if f["single_point"].value else f["max_steps"].value, 0, "visible"
+        per = 1 if f["single_point"].value else f["max_steps"].value
+        progress.max, progress.value, progress.layout.visibility = per * (6 if optimize else 1), 0, "visible"
         watcher.start()
     try:
         log, failure, r = Capture(), None, None
@@ -297,7 +329,7 @@ def run(relax):
                 w.Output():                                    # never shown: papermill's progress bar
             warnings.simplefilter("ignore")                    # simtool's and papermill's run log
             try:
-                r = Run(loc, collect(relax), runName=name, venue=VENUE)
+                r = Run(loc, collect(relax, optimize), runName=name, venue=VENUE)
                 summary = r.read("summary")                # in here: simtool prints when it is missing
             except Exception as error:                         # caught here: w.Output() would swallow it
                 failure = error
@@ -323,6 +355,22 @@ def run(relax):
             raise failure
         poscar_relaxed = r.read("POSCAR_relaxed")
         state["outputs"] = summary
+        if summary["mxene"].get("stacking_auto"):           # select the stacking it found; no rebuild, the structure has it
+            state["auto"] = dict(summary["mxene"]["stacking_auto"], mxene=summary["mxene"]["formula"])
+            quiet["stacking"] = True
+            try:
+                f["stacking"].value = summary["mxene"]["stacking"]
+            finally:
+                quiet["stacking"] = False
+        scan = summary.get("metal_scan")
+        if scan:                                           # select the placement it kept; no rebuild, the structure has it
+            for name in ("metal_site", "metal_stacking"):
+                quiet[name] = True
+                try:
+                    f[name].value = scan["chosen"][name]
+                finally:
+                    quiet[name] = False
+            scan_view.value = scan_table(scan)
         mx, mt = state["outputs"]["mxene"]["formula"], state["outputs"]["metal"]["symbol"]
         state["files"] = {name: text for name, text in [("POSCAR", r.read("POSCAR")), (f"POSCAR_{mx}", r.read("POSCAR_mxene")),
                           (f"POSCAR_{mt}", r.read("POSCAR_metal")), ("POSCAR_relaxed", poscar_relaxed),
@@ -360,7 +408,7 @@ def run(relax):
     finally:
         done.set()
         progress.layout.visibility = "hidden"
-        build_button.disabled = relax_button.disabled = False
+        build_button.disabled = relax_button.disabled = optimize_button.disabled = False
 
 
 build_button.on_click(lambda _: run(False))
@@ -384,9 +432,12 @@ def exclusive(change):
 for box in MODES:
     box.observe(exclusive, names="value")
 relax_button.on_click(lambda _: run(True))
+optimize_button.on_click(lambda _: run(True, optimize=True))
 for name in ("mxene", "stacking", "mxene_rotation", "metal", "metal_layers", "metal_site", "metal_stacking",
              "gap", "shift_x", "shift_y", "tol", "max_replicas", "vacuum"):
-    f[name].observe(lambda _: auto.value and run(False), names="value")
+    f[name].observe(lambda _, name=name: auto.value and not quiet.get(name) and run(False), names="value")
+for name in ("head", "dispersion"):                    # these change the build only through stacking = auto
+    f[name].observe(lambda _: auto.value and f["stacking"].value == "auto" and run(False), names="value")
 for widget in (view, repeat, show, show_cell):
     widget.observe(draw, names="value")
 

@@ -291,6 +291,7 @@ async function startRelax(optimize = false) {
     seen = job.n_events;
     const last = job.events.at(-1);
     if (last) $("relaxStatus").textContent = (last.candidate ? `Placement ${last.candidate}/${last.of}: ${last.metal_site}, ${last.metal_stacking} · ` : "")
+      + (last.part ? `Separated ${last.part === "mxene" ? "MXene" : "metal"} · ` : "")
       + `Step ${last.step} · E = ${fmt(last.energy, 4)} eV · fmax = ${fmt(last.fmax, 4)} eV/Å`;
     if (job.state === "running") continue;
     $("relaxBtn").disabled = $("optimizeMetalBtn").disabled = false;
@@ -339,7 +340,7 @@ function renderRelaxation(o) {
       ["MXene–metal gap", fmt(r.gap, 3), "Å"],
       ["Fixed atoms", String(r.fixed_atoms), ""],
     ];
-    if (r.work_of_adhesion !== undefined) rows.push(["Work of adhesion", fmt(r.work_of_adhesion, 3), "J/m² (rigid)"]);
+    if (r.work_of_adhesion !== undefined) rows.push(["Work of separation, rigid", fmt(r.work_of_adhesion, 3), "J/m²"]);
     $("relaxBody").replaceChildren(...rows.map(([k, v, u]) => h("tr", {}, h("td", {}, k), h("td", { class: "num" }, v), h("td", {}, u))));
     $("relaxStatus").textContent = `${model}: single point, E = ${fmt(r.energy_final, 4)} eV.`;
     $("relaxPanel").hidden = false;
@@ -353,7 +354,12 @@ function renderRelaxation(o) {
     ["MXene–metal gap", fmt(r.gap, 3), "Å"],
     ["Fixed atoms", String(r.fixed_atoms), ""],
   ];
-  if (r.work_of_adhesion !== undefined) rows.push(["Work of adhesion", fmt(r.work_of_adhesion, 3), "J/m²"]);
+  if (r.work_of_adhesion !== undefined) rows.push(["Work of separation, rigid", fmt(r.work_of_adhesion, 3), "J/m²"]);
+  if (r.work_of_adhesion_relaxed !== undefined) {
+    const s = r.separated;
+    const parts = ["metal", "mxene"].map((k) => `${k === "mxene" ? "MXene" : "metal"} ${s[k].converged ? "converged" : "not converged"} in ${s[k].n_steps}`);
+    rows.push(["Work of adhesion", fmt(r.work_of_adhesion_relaxed, 3), `J/m² (${parts.join(", ")} steps)`]);
+  }
   $("relaxBody").replaceChildren(...rows.map(([k, v, u]) => h("tr", {}, h("td", {}, k), h("td", { class: "num" }, v), h("td", {}, u))));
   $("relaxStatus").textContent = `${model}: ${rows[0][1]} after ${r.n_steps} steps.`;
   $("relaxPanel").hidden = false;

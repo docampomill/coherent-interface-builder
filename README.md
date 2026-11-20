@@ -8,7 +8,7 @@ Builds an MXene/metal interface in one orthogonal box, relaxes it with a MACE ma
 2. **Metal.** Conventional cubic cell built from its space group: FCC `Fm-3m` (4a), or L1₂ `Pm-3m` (B at 1a, A at 3c). It is then turned so that [111] is along z: a stack of close-packed (111) layers, d₁₁₁ = a_cubic/√3 apart, in the same a × √3a form as the MXene with a → a₁₁₁ (a₁₁₁ × √3a₁₁₁ for FCC, 2a₁₁₁ × 2√3a₁₁₁ for L1₂, whose B atoms form a 2 × 2 superlattice in each layer).
 3. **Supercell.** The metal is the substrate and the MXene is added on it. Along x and along y, the tool finds the smallest whole number of metal replicas that matches a whole number of MXene replicas within the strain tolerance. The metal keeps its lattice constant and the MXene takes the strain (see [Supercell matching](#supercell-matching)).
 4. **Placement.** Metal (111) on MXene (0001), metal [1-10] along x, layer by layer: the first metal (111) plane sits at a set gap above the top MXene layer, on site A, B or C of the MXene grid, and the metal layers then follow A → B → C (or its twin). An optional in-plane shift slides the MXene over the metal, which stays in place as the substrate.
-5. **Relaxation.** MACE (default MACE-MH-1, `omat_pbe` head) in float64, optional D3(BJ) dispersion and FIRE. The outermost metal layers are held fixed, and the in-plane cell can relax too. The interfaces offer three exclusive modes, single point by default: a single point energy of the built structure (for energy-vs-sliding scans), ionic relaxation (atoms only, fixed cell), or relaxing the in-plane cell too (atoms and a, b, γ). Optionally reports the work of adhesion.
+5. **Relaxation.** MACE (default MACE-MH-1, `omat_pbe` head) in float64, optional D3(BJ) dispersion and FIRE. The outermost metal layers are held fixed, and the in-plane cell can relax too. The interfaces offer three exclusive modes, single point by default: a single point energy of the built structure (for energy-vs-sliding scans), ionic relaxation (atoms only, fixed cell), or relaxing the in-plane cell too (atoms and a, b, γ). Optionally reports the rigid work of separation (the separated MXene and metal keep their interface positions), and after an ionic or in-plane cell relaxation also the work of adhesion (each separated part relaxed, atoms only).
    **Optimize metal position** (`optimize_metal`) runs the selected mode for every first metal layer site (A, B, C) with each metal stacking (A → B → C and A → C → B), six interfaces with the same atoms in the same box, and keeps the lowest energy. The app then selects that site and stacking; `outputs.json → metal_scan` lists all six with ΔE in eV and per interface area.
 6. **Built vs relaxed.** Per-atom displacements, layer heights and spacings, the gap, the MXene thickness and the cell, before and after relaxation (see below).
 7. **Atomic planes.** Shows the (hkl) planes of the strained MXene cell or of the metal cell in the viewer.
@@ -72,7 +72,7 @@ python relax.py inputs.json       # build and relax: adds POSCAR_relaxed and the
 `simtool/coherentmxmetal.ipynb` is the same workflow as a nanoHUB [SimTool](https://simtool.readthedocs.io/) (Sim2L): a notebook that declares its inputs and outputs in YAML, checks the inputs, and saves the outputs to nanoHUB's results database. Runs with the same inputs come from the cache.
 
 - **Inputs:** the inputs above, with `shift` split into `shift_x` and `shift_y`, plus `run_relaxation` (off by default: build only). Lengths take units, e.g. `gap = "0.25 nm"`.
-- **Outputs:** `formula`, `n_atoms`, `box`, `strain_x`, `strain_y`, `stacking_used` (the stacking chosen with `stacking = auto`), `metal_scan` (with `optimize_metal`), `match`, the POSCARs as text, and after a relaxation `energy`, `gap_relaxed` and `work_of_adhesion` (empty otherwise). `summary` holds everything in `outputs.json`, the POSCARs too (under `files`), because AURAMCP's metadata for the Sim2L leaves out `POSCAR`, `POSCAR_mxene`, `POSCAR_relaxed` and `work_of_adhesion`.
+- **Outputs:** `formula`, `n_atoms`, `box`, `strain_x`, `strain_y`, `stacking_used` (the stacking chosen with `stacking = auto`), `metal_scan` (with `optimize_metal`), `match`, the POSCARs as text, and after a relaxation `energy`, `gap_relaxed`, `work_of_adhesion` and `work_of_adhesion_relaxed` (empty otherwise). `summary` holds everything in `outputs.json`, the POSCARs too (under `files`), because AURAMCP's metadata for the Sim2L leaves out `POSCAR`, `POSCAR_mxene`, `POSCAR_relaxed` and `work_of_adhesion`.
 - `simtool/builder.py` and `simtool/relax.py` are links to the top-level files. The notebook lists them and `sim2l.py` as `EXTRA_FILES`, so each run gets them, and `builder.py` finds the spreadsheet through the link.
 - `landing_page.ipynb` is the page nanoHUB opens: abstract, links and references.
 - `bin/interactive.ipynb` is a form like the web app (ipywidgets): menus for the MXene, metal and placement, a rebuild after each change, a Relax button with live progress (step, energy and fmax, read from the `progress.jsonl` the Sim2L writes in its run folder at every FIRE step), the structure views, tables and POSCAR downloads. Every build runs the Sim2L. It opens in the `torchsim` kernel (Python3.12 (TorchSim) in jupyter70), which has `simtool` and `submit`.
@@ -116,7 +116,7 @@ r.read("POSCAR"), r.read("strain_x")
 | `fixed_layers` | 2 | outermost metal layers held fixed |
 | `relax_cell` | true | relax a, b and γ; c stays fixed |
 | `single_point` | false | MACE energy of the built structure, no ionic relaxation; `relax_cell` is then ignored, and there is no `POSCAR_relaxed` or comparison |
-| `work_of_adhesion` | false | from the rigidly separated MXene and metal |
+| `work_of_adhesion` | false | report the rigid work of separation, from the separated MXene and metal as they are in the interface; after an ionic or in-plane cell relaxation also the work of adhesion, each separated part relaxed too (FIRE, atoms only, at the interface cell; the metal keeps its fixed layers). With `optimize_metal`, for the placement kept only |
 
 ## Outputs (`outputs.json`)
 
@@ -129,7 +129,7 @@ r.read("POSCAR"), r.read("strain_x")
 - `files`: `POSCAR` (interface), `POSCAR_<mxene>`, `POSCAR_<metal>`.
 
 After a relaxation, outputs.json also has:
-- `relaxation`: optimizer, fixed atoms, converged, steps, initial and final energy, final fmax, cell a, b and γ, MXene–metal gap, package versions and the energy/fmax per step. Also the work of adhesion in J/m², when asked.
+- `relaxation`: optimizer, fixed atoms, converged, steps, initial and final energy, final fmax, cell a, b and γ, MXene–metal gap, package versions and the energy/fmax per step. Also, when asked, in J/m²: the rigid work of separation `work_of_adhesion` with `energy_metal`, `energy_mxene` and `area`, and unless `single_point` the work of adhesion `work_of_adhesion_relaxed`, `energy_metal_relaxed`, `energy_mxene_relaxed` and `separated` (converged and steps of each part).
 - `comparison`: built vs relaxed, below.
 - `files.POSCAR_relaxed`.
 
@@ -168,7 +168,7 @@ Displacements are Cartesian, using the minimum image in-plane. When the in-plane
 | File | Content |
 |---|---|
 | `builder.py` | builds the interface from the inputs |
-| `relax.py` | MACE relaxation, work of adhesion and the built-vs-relaxed comparison |
+| `relax.py` | MACE relaxation, works of separation and adhesion and the built-vs-relaxed comparison |
 | `planes.py` | atomic planes for the viewer |
 | `app.py` | Flask app |
 | `templates/`, `static/` | page, styles, script and bundled 3Dmol.js |

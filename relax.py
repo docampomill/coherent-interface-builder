@@ -28,8 +28,8 @@ DEFAULTS = dict(
     fixed_layers=2,            # outermost metal layers held fixed
     relax_cell=True,           # relax a, b and γ; c stays fixed
     single_point=False,        # MACE energy and forces of the built structure, no ionic relaxation (relax_cell ignored)
-    work_of_adhesion=False,    # from the rigidly separated MXene and metal
-    optimize_metal=False,      # run every metal_site (A, B, C) × metal_stacking (ABC, ACB) and keep the lowest energy
+    work_of_adhesion=False,    # rigid work of separation, and work of adhesion (relaxed parts) unless single_point
+    optimize_metal=False,     # run every metal_site (A, B, C) × metal_stacking (ABC, ACB) and keep the lowest energy
 )
 HEADS = {"omat_pbe": "PBE(+U)", "oc20_usemppbe": "PBE slabs", "matpes_r2scan": "r²SCAN"}
 MH_URLS = {name: f"https://github.com/ACEsuit/mace-foundations/releases/download/mace_mh_1/mace-{name}.model"
@@ -90,6 +90,61 @@ def version(package):
         return None
 
 
+def interface_atoms(structure, n_mx, n_metal, p):
+    """ASE Atoms of an interface Structure (with its "layer" site property), the outermost metal layers fixed,
+    with the MACE calculator of p."""
+    layers = np.array(structure.site_properties["layer"])
+    atoms = Atoms([s.species_string for s in structure], positions=structure.cart_coords,
+                  cell=structure.lattice.matrix, pbc=True)
+    atoms.set_array("layer", layers)
+    fixed = np.flatnonzero(layers >= max(n_mx, n_mx + n_metal - p["fixed_layers"]))   # top metal layers only
+    atoms.set_constraint(FixAtoms(indices=fixed))
+    atoms.calc = calculator(p["model"], p["head"], p["dispersion"])
+    return atoms
+
+
+def work_of_adhesion(atoms, n_mx, energy, p, progress=None, should_stop=None):
+    """Rigid work of separation and work of adhesion of the interface `atoms` of interface_atoms (energy `energy`;
+    the "layer" array, below n_mx the MXene) from the separated MXene and metal, each in the same cell with 20 Å more
+    vacuum. Rigid work of separation (key work_of_adhesion): the parts keep the interface positions. Unless
+    p["single_point"] (the interface itself unrelaxed): each part is also relaxed (FIRE, atoms only, the metal keeps
+    its fixed layers), which gives the work of adhesion (key work_of_adhesion_relaxed); a stop leaves it out."""
+    metal = atoms.arrays["layer"] >= n_mx
+    area = float(np.linalg.norm(np.cross(atoms.cell[0], atoms.cell[1])))
+    per_area = lambda e_metal, e_mxene: round((e_metal + e_mxene - energy) / area * EV_PER_A2_TO_J_PER_M2, 5)
+    parts = {}
+    for name, mask in (("metal", metal), ("mxene", ~metal)):
+        part = atoms[mask]                             # FixAtoms comes along, remapped: only the metal has fixed atoms
+        part.cell[2, 2] += 20.0                        # extra vacuum keeps each part isolated
+        part.calc = atoms.calc
+        parts[name] = part
+    rigid = {name: float(part.get_potential_energy()) for name, part in parts.items()}
+    out = dict(energy_metal=rigid["metal"], energy_mxene=rigid["mxene"], area=round(area, 4),
+               work_of_adhesion=per_area(rigid["metal"], rigid["mxene"]))
+    if p["single_point"]:
+        return out
+
+    relaxed, separated = {}, {}
+    for name, part in parts.items():
+        opt = FIRE(part, logfile=None)
+        converged, stopped = False, False
+        for converged in opt.irun(fmax=p["fmax"], steps=p["max_steps"]):
+            forces = part.get_forces()
+            if progress:
+                progress(dict(part=name, step=opt.nsteps, energy=float(part.get_potential_energy()),
+                              fmax=float(np.sqrt((forces**2).sum(axis=1).max()))))
+            if should_stop and should_stop():
+                stopped = True
+                break
+        if stopped:
+            return out
+        relaxed[name] = float(part.get_potential_energy())
+        separated[name] = dict(converged=bool(converged), n_steps=opt.nsteps)
+    out.update(energy_metal_relaxed=relaxed["metal"], energy_mxene_relaxed=relaxed["mxene"], separated=separated,
+               work_of_adhesion_relaxed=per_area(relaxed["metal"], relaxed["mxene"]))
+    return out
+
+
 def relax(inputs, progress=None, should_stop=None):
     """Build, then relax. Returns (relaxed Structure, outputs of builder.build plus "relaxation" and POSCAR_relaxed).
     With single_point: one energy of the built structure, no POSCAR_relaxed and no comparison.
@@ -104,12 +159,8 @@ def relax(inputs, progress=None, should_stop=None):
 
     layers = np.array(structure.site_properties["layer"])
     n_mx = len(outputs["mxene"]["layers"])
-    n_all = n_mx + outputs["metal"]["layers"]
-    atoms = Atoms([s.species_string for s in structure], positions=structure.cart_coords,
-                  cell=structure.lattice.matrix, pbc=True)
-    fixed = np.flatnonzero(layers >= max(n_mx, n_all - p["fixed_layers"]))      # top metal layers only
-    atoms.set_constraint(FixAtoms(indices=fixed))
-    atoms.calc = calculator(p["model"], p["head"], p["dispersion"])
+    atoms = interface_atoms(structure, n_mx, outputs["metal"]["layers"], p)
+    fixed = atoms.constraints[0].index
 
     trace, converged, stopped = [], False, False
     if p["single_point"]:
@@ -142,18 +193,7 @@ def relax(inputs, progress=None, should_stop=None):
                   versions={pkg: version(pkg) for pkg in ("mace-torch", "torch", "torch-dftd", "ase")}, trace=trace)
 
     if p["work_of_adhesion"] and not stopped:
-        metal = layers >= n_mx
-        energies = []
-        for mask in (metal, ~metal):
-            part = atoms[mask]
-            part.set_constraint()
-            part.cell[2, 2] += 20.0                    # extra vacuum keeps each part isolated
-            part.calc = atoms.calc
-            energies.append(float(part.get_potential_energy()))
-        area = float(np.linalg.norm(np.cross(atoms.cell[0], atoms.cell[1])))
-        w = (sum(energies) - result["energy_final"]) / area
-        result.update(energy_metal=energies[0], energy_mxene=energies[1], area=round(area, 4),
-                      work_of_adhesion=round(w * EV_PER_A2_TO_J_PER_M2, 5))
+        result.update(work_of_adhesion(atoms, n_mx, result["energy_final"], p, progress, should_stop))
 
     relaxed = Structure(atoms.cell[:], atoms.get_chemical_symbols(), atoms.positions, coords_are_cartesian=True,
                         to_unit_cell=False, site_properties=structure.site_properties)
@@ -172,7 +212,8 @@ def optimize_metal(inputs, progress=None, should_stop=None):
     runs = []
     for i, (site, stacking) in enumerate(METAL_CANDIDATES):
         tag = dict(candidate=i + 1, of=len(METAL_CANDIDATES), metal_site=site, metal_stacking=stacking)
-        run = relax({**inputs, "optimize_metal": False, "metal_site": site, "metal_stacking": stacking},
+        run = relax({**inputs, "optimize_metal": False, "metal_site": site, "metal_stacking": stacking,
+                     "work_of_adhesion": False},     # only for the one kept, below
                     progress=progress and (lambda s: progress({**s, **tag})), should_stop=should_stop)
         runs.append(run)
         if run[1]["relaxation"]["stopped"]:
@@ -192,6 +233,15 @@ def optimize_metal(inputs, progress=None, should_stop=None):
                          delta_per_area=round((o["relaxation"]["energy_final"] - e_min) / area * EV_PER_A2_TO_J_PER_M2, 5),
                          converged=o["relaxation"]["converged"], stopped=o["relaxation"]["stopped"],
                          gap=o["relaxation"]["gap"]) for _, o in runs])
+
+    p = {**DEFAULTS, **inputs}
+    stopped = should_stop and should_stop()
+    outputs["inputs"].update(work_of_adhesion=p["work_of_adhesion"])
+    if p["work_of_adhesion"] and not outputs["relaxation"]["stopped"] and not stopped:
+        n_mx = len(outputs["mxene"]["layers"])
+        atoms = interface_atoms(relaxed, n_mx, outputs["metal"]["layers"], p)
+        outputs["relaxation"].update(work_of_adhesion(atoms, n_mx, outputs["relaxation"]["energy_final"], p,
+                                                      progress, should_stop))
     return relaxed, outputs
 
 
@@ -248,10 +298,12 @@ if __name__ == "__main__":
         for k in outputs["metal_scan"]["candidates"]:
             print(f"metal {k['metal_site']} {k['metal_stacking']}: E = {k['energy']:.6f} eV, ΔE = {k['delta']:.4f} eV")
         print("lowest:", outputs["metal_scan"]["chosen"])
+    r = outputs["relaxation"]
+    if "work_of_adhesion" in r:
+        print(f"work of separation, rigid: {r['work_of_adhesion']} J/m²"
+              + (f", work of adhesion: {r['work_of_adhesion_relaxed']} J/m²" if "work_of_adhesion_relaxed" in r else ""))
     if "comparison" not in outputs:
-        r = outputs["relaxation"]
-        print(f"single point: E = {r['energy_final']:.6f} eV, fmax = {r['fmax_final']:.4f} eV/Å"
-              + (f", work of adhesion {r['work_of_adhesion']} J/m²" if "work_of_adhesion" in r else ""))
+        print(f"single point: E = {r['energy_final']:.6f} eV, fmax = {r['fmax_final']:.4f} eV/Å")
         sys.exit()
     c = outputs["comparison"]
     print(f"max |Δr| {c['max_displacement']['norm']:.3f} Å ({c['max_displacement']['species']} #{c['max_displacement']['atom']}), "

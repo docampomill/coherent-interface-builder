@@ -95,7 +95,7 @@ f = dict(
     fixed_layers=number("fixed_layers", "Fix outermost metal layers", 1),
     relax_cell=check("relax_cell", "Relax in-plane cell (c stays fixed)"),
     single_point=check("single_point", "Single point energy"),
-    work_of_adhesion=check("work_of_adhesion", "Report work of adhesion"),
+    work_of_adhesion=check("work_of_adhesion", "Report work of separation and adhesion"),
 )
 # Ionic relaxation (atoms only, fixed cell) is neither relax_cell nor single_point, so it is not a Sim2L input
 # and stays out of f, which collect() copies into the inputs.
@@ -232,7 +232,7 @@ def render():
             ["Energy (eV)", f"{r['energy_final']:.4f}"],
             ["fmax (eV/Å)", f"{r['fmax_final']:.4f}"],
             ["Gap (Å)", fmt(r["gap"])],
-            ["Work of adhesion, rigid (J/m²)", fmt(r.get("work_of_adhesion"))],
+            ["Work of separation, rigid (J/m²)", fmt(r.get("work_of_adhesion"))],
         ], "MACE energy of the built structure, no ionic relaxation."))
     elif r:
         parts.append(table("Relaxation", ["", ""], [
@@ -243,7 +243,11 @@ def render():
             ["MXene thickness (Å)", f"{c['mxene_thickness']['initial']} → {c['mxene_thickness']['relaxed']}"],
             ["Max |Δr| (Å)", f"{c['max_displacement']['norm']} ({c['max_displacement']['species']} "
                              f"#{c['max_displacement']['atom']}), RMS {c['rms_displacement']}"],
-            ["Work of adhesion (J/m²)", fmt(r.get("work_of_adhesion"))],
+            ["Work of separation, rigid (J/m²)", fmt(r.get("work_of_adhesion"))],
+            ["Work of adhesion (J/m²)", fmt(r.get("work_of_adhesion_relaxed"))
+             + ("" if "separated" not in r else " (" + ", ".join(
+                 f"{'MXene' if k == 'mxene' else 'metal'} {'converged' if v['converged'] else 'not converged'} in {v['n_steps']}"
+                 for k, v in r["separated"].items()) + " steps)")],
         ]))
         parts.append(table("Built vs relaxed, layer by layer",
                            ["#", "Part", "Δz", "Spacing built", "Spacing relaxed", "Rumpling", "Slide", "⟨|Δr|⟩"],
@@ -291,8 +295,10 @@ def watch(path, done, start):
         except (IndexError, ValueError):                       # nothing yet, or a line half written
             continue
         per = progress.max // s.get("of", 1)           # optimize_metal: the bar runs over every placement
-        progress.value = min((s.get("candidate", 1) - 1) * per + min(s["step"], per), progress.max)
+        progress.value = progress.max if "part" in s else \
+            min((s.get("candidate", 1) - 1) * per + min(s["step"], per), progress.max)    # separated parts: full bar
         relax_status.value = ((f"Placement {s['candidate']}/{s['of']}: {s['metal_site']}, {s['metal_stacking']} · " if "candidate" in s else "")
+                              + (f"Separated {'MXene' if s['part'] == 'mxene' else 'metal'} · " if "part" in s else "")
                               + f"Step {s['step']} · E = {s['energy']:.4f} eV · fmax = {s['fmax']:.4f} eV/Å"
                               f" · {time.time() - start:.0f} s")
 

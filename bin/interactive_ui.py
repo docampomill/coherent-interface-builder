@@ -95,7 +95,7 @@ f = dict(
     fixed_layers=number("fixed_layers", "Fix outermost metal layers", 1),
     relax_cell=check("relax_cell", "Relax in-plane cell (c stays fixed)"),
     single_point=check("single_point", "Single point energy"),
-    work_of_adhesion=check("work_of_adhesion", "Report work of separation and adhesion"),
+    work_of_adhesion=check("work_of_adhesion", "Report work of adhesion"),
 )
 # Ionic relaxation (atoms only, fixed cell) is neither relax_cell nor single_point, so it is not a Sim2L input
 # and stays out of f, which collect() copies into the inputs.

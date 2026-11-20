@@ -8,7 +8,7 @@ Builds an MXene/metal interface in one orthogonal box, relaxes it with a MACE ma
 2. **Metal.** Conventional cubic cell built from its space group: FCC `Fm-3m` (4a), or L1₂ `Pm-3m` (B at 1a, A at 3c). It is then turned so that [111] is along z: a stack of close-packed (111) layers, d₁₁₁ = a_cubic/√3 apart, in the same a × √3a form as the MXene with a → a₁₁₁ (a₁₁₁ × √3a₁₁₁ for FCC, 2a₁₁₁ × 2√3a₁₁₁ for L1₂, whose B atoms form a 2 × 2 superlattice in each layer).
 3. **Supercell.** The metal is the substrate and the MXene is added on it. Along x and along y, the tool finds the smallest whole number of metal replicas that matches a whole number of MXene replicas within the strain tolerance. The metal keeps its lattice constant and the MXene takes the strain (see [Supercell matching](#supercell-matching)).
 4. **Placement.** Metal (111) on MXene (0001), metal [1-10] along x, layer by layer: the first metal (111) plane sits at a set gap above the top MXene layer, on site A, B or C of the MXene grid, and the metal layers then follow A → B → C (or its twin). An optional in-plane shift slides the MXene over the metal, which stays in place as the substrate.
-5. **Relaxation.** MACE (default MACE-MH-1, `omat_pbe` head) in float64, optional D3(BJ) dispersion and FIRE. The outermost metal layers are held fixed, and the in-plane cell can relax too. The interfaces offer three exclusive modes, single point by default: a single point energy of the built structure (for energy-vs-sliding scans), ionic relaxation (atoms only, fixed cell), or relaxing the in-plane cell too (atoms and a, b, γ). Optionally reports the work of adhesion.
+5. **Relaxation.** MACE (default MACE-MH-1, `omat_pbe` head) in float64, optional D3(BJ) dispersion and FIRE, or the Allegro MXene potential (see [Allegro](#allegro)). The outermost metal layers are held fixed, and the in-plane cell can relax too. The interfaces offer three exclusive modes, single point by default: a single point energy of the built structure (for energy-vs-sliding scans), ionic relaxation (atoms only, fixed cell), or relaxing the in-plane cell too (atoms and a, b, γ). Optionally reports the work of adhesion.
    **Optimize metal position** (`optimize_metal`) runs the selected mode for every first metal layer site (A, B, C) with each metal stacking (A → B → C and A → C → B), six interfaces with the same atoms in the same box, and keeps the lowest energy. The app then selects that site and stacking; `outputs.json → metal_scan` lists all six with ΔE in eV and per interface area.
 6. **Built vs relaxed.** Per-atom displacements, layer heights and spacings, the gap, the MXene thickness and the cell, before and after relaxation (see below).
 7. **Atomic planes.** Shows the (hkl) planes of the strained MXene cell or of the metal cell in the viewer.
@@ -42,12 +42,12 @@ The *Box* panel in the web app and `outputs.json → match` report m, n, the box
 
 ## Run
 
-With Podman (the image includes CPU PyTorch and the MACE-MH-1 weights):
+With Podman (the image includes CPU PyTorch, the MACE-MH-1 weights and, if `models/allegro/` holds it at build time, the Allegro model):
 
 ```bash
-podman build -t coherent-interface-builder:2.1.0 .
-podman run --rm -p 8000:8000 coherent-interface-builder:2.1.0          # open http://localhost:8000
-podman run --rm -p 8000:8000 -v "$PWD/data:/app/data:Z" coherent-interface-builder:2.1.0   # use your own copy of the spreadsheet
+podman build -t mxbuilder:2.0.4 .
+podman run --rm -p 8000:8000 mxbuilder:2.0.4          # open http://localhost:8000
+podman run --rm -p 8000:8000 -v "$PWD/data:/app/data:Z" mxbuilder:2.0.4   # use your own copy of the spreadsheet
 ```
 
 Without the container (Python 3.11 or newer):
@@ -66,6 +66,27 @@ python relax.py inputs.json       # build and relax: adds POSCAR_relaxed and the
 ```
 
 `inputs.json` holds only the inputs you want to change; everything else takes its default. Without a file, both scripts use the defaults. The web app can save `inputs.json`. It can also load `inputs.json`, or an `outputs.json` to restore that run's inputs.
+
+## Allegro
+
+`model = "allegro"` (Model → Allegro in the interfaces) uses an Allegro machine-learned potential for MXenes and MAX
+phases, trained on Quantum ESPRESSO PBE-D3 (handoff of 2026-11-11, Active_Allegro iteration 5, 6 Å cutoff). Every
+calculation the app does with MACE works with it: single point, ionic and cell relaxation, auto stacking, the metal
+placement scan and the work of adhesion. Run twice, once per model, to compare.
+
+- **The model is not in git** (unpublished, accuracy not yet scored). Put the handoff's
+  `models/deployed_model.nequip.zip` and `energy_references.json` (plus its README) in `models/allegro/`, which git
+  ignores, before building the image; `ALLEGRO_MODEL` points elsewhere. Without it the interfaces offer MACE only.
+- **Its own environment.** nequip 0.17 needs e3nn 0.6, and MACE's mh-1 model loads only with e3nn 0.4.4, so the two
+  cannot share one Python. The image puts nequip in the venv `/opt/allegro` (`requirements-allegro.txt`, reusing the
+  image's torch), and `relax.py` runs Allegro through `allegro_worker.py` in it (`ALLEGRO_PYTHON`), over a pipe.
+- **D3 is in the model.** The app never adds its D3(BJ) to Allegro; the D3 box is checked and locked. It has no heads.
+- **Energies are referenced** per element (the model's `energy_references.json`): differences between structures with
+  the same atoms (stackings, placements, relaxations, work of adhesion) compare with MACE's; totals do not.
+- **50 elements.** Of the spreadsheet only Si is missing, so Ni₃Si cannot use Allegro: the relaxation buttons are
+  off and the CLI stops with an error.
+- Read the handoff README (sections 5 and 6, where not to trust it) before using its numbers. Check on the image:
+  `examples/V2CO2.extxyz` gives 0.205463 eV, as in the handoff.
 
 ## nanoHUB SimTool
 
@@ -108,7 +129,7 @@ r.read("POSCAR"), r.read("strain_x")
 | `shift` | [0, 0] | Å, in-plane shift of the MXene along x, y; the metal substrate stays in place |
 | `tol` | 0.02 | largest \|strain\| on the MXene along x and y |
 | `max_replicas` | 10 | largest number of metal replicas tried per direction |
-| `model` | `mh-1` | MACE foundation model |
+| `model` | `mh-1` | MACE foundation model, or `allegro` for the Allegro MXene potential (head and dispersion then ignored) |
 | `head` | `omat_pbe` | output head of the MH models: `omat_pbe` (PBE(+U)), `oc20_usemppbe` (PBE slabs), `matpes_r2scan` (r²SCAN) |
 | `dispersion` | false | add D3(BJ) |
 | `fmax` | 0.01 | eV/Å, force convergence |

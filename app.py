@@ -3,6 +3,7 @@
     flask --app app run --port 8000
     gunicorn -w 1 --threads 4 -b 0.0.0.0:8000 app:app      (one worker: the relaxation job lives in it)
 """
+import re
 import threading
 from collections import defaultdict
 
@@ -36,7 +37,11 @@ def index():
         mxenes[row["family"]].append(row)
     for row in builder.METALS.values():
         metals[row["structure"]].append(row)
-    options = dict(mxenes=mxenes, metals=metals, heads=relax.HEADS, defaults={**builder.DEFAULTS, **relax.DEFAULTS, "single_point": True},   # the form opens on a single point
+    elements = {r["formula"]: sorted(set(builder.mxene_layers(r["formula"]))) for r in builder.MXENES.values()}
+    elements.update({s: sorted(set(re.findall(r"[A-Z][a-z]?", s))) for s in builder.METALS})
+    options = dict(mxenes=mxenes, metals=metals, heads=relax.HEADS, elements=elements,
+                   models={m: d for m, d in relax.MODELS.items() if m != "allegro" or relax.ALLEGRO_ELEMENTS},   # Allegro only with its model
+                   allegro_elements=sorted(relax.ALLEGRO_ELEMENTS), defaults={**builder.DEFAULTS, **relax.DEFAULTS, "single_point": True},   # the form opens on a single point
                    spreadsheet=dict(file=builder.SPREADSHEET.name, sha256=builder.SHA256))
     return render_template("index.html", options=options)
 

@@ -44,6 +44,8 @@ SPIN = "<span class='cib-spin'></span>"                  # loading icon, styled 
 WIDE, HALF = w.Layout(width="100%"), w.Layout(width="48%")
 STYLE = {"description_width": "initial"}
 LOG = Path("last_run.log").resolve()                   # absolute: papermill changes directory
+REFERENCES = Path(__file__).resolve().parents[1] / "models" / "allegro" / "energy_references.json"   # the Allegro model's
+ALLEGRO_ELEMENTS = set(json.loads(REFERENCES.read_text())["mu_eV_per_atom"]) if REFERENCES.exists() else None   # elements
 
 
 def value(name):
@@ -71,7 +73,7 @@ def check(name, label):
 # ---------- inputs, in the sections of the web app ----------
 f = dict(
     mxene=choice("mxene", "MXene"),
-    stacking=toggle("stacking", "Stacking", [("Auto · lowest MACE energy", "auto"), ("AβC · octahedral", "ABC"),
+    stacking=toggle("stacking", "Stacking", [("Auto · lowest energy", "auto"), ("AβC · octahedral", "ABC"),
                                              ("AβA · trigonal prismatic", "ABA")]),
     mxene_rotation=toggle("mxene_rotation", "Orientation about z", [("0° · C right of A", 0), ("180° · B ↔ C", 180)]),
     metal=choice("metal", "Metal", layout=HALF),
@@ -86,7 +88,7 @@ f = dict(
     tol=number("tol", "Strain tolerance", 0.005),
     max_replicas=number("max_replicas", "Max metal replicas", 1),
     vacuum=number("vacuum", "Vacuum below (Å)", 0.5),
-    model=w.Text(value=value("model"), description="MACE model", style=STYLE, layout=HALF),
+    model=choice("model", "Model", [("MACE mh-1", "mh-1"), ("Allegro · MXene PBE-D3", "allegro")], HALF),
     head=choice("head", "Head", [("omat_pbe · PBE(+U)", "omat_pbe"), ("oc20_usemppbe · PBE slabs", "oc20_usemppbe"),
                 ("matpes_r2scan · r²SCAN", "matpes_r2scan")], HALF),
     dispersion=check("dispersion", "Add D3(BJ) dispersion (needs torch-dftd)"),
@@ -107,6 +109,7 @@ relax_button = w.Button(description="Compute energy", button_style="warning", ic
 optimize_button = w.Button(description="Optimize metal position", button_style="primary", icon="search",
                            layout=w.Layout(width="auto"))
 scan_view = w.HTML()                                   # the placements of the last optimize_metal run
+model_hint = w.HTML()                                  # Allegro: referenced energies, or the elements it lacks
 status = w.HTML()
 relax_status = w.HTML()
 progress = w.IntProgress(min=0, max=1, layout=w.Layout(width="100%", visibility="hidden"))
@@ -124,15 +127,15 @@ row = lambda *c: w.HBox(c, layout=w.Layout(justify_content="space-between", flex
 form = w.VBox([
     section(1, "MXene", f["mxene"], f["stacking"], f["mxene_rotation"]),
     section(2, "Metal", row(f["metal"], f["metal_layers"]), row(f["metal_site"], f["metal_stacking"]), optimize_button,
-            scan_view, hint="Optimize tries the first layer on A, B and C with each stacking, in the mode and with the MACE "
-                            "settings of the Relaxation section, then selects the lowest energy."),
+            scan_view, hint="Optimize tries the first layer on A, B and C with each stacking, in the mode and with the model "
+                            "of the Relaxation section, then selects the lowest energy."),
     section(3, "Location", row(f["gap"], f["vacuum"]), row(f["shift_x"], f["shift_y"]), row(f["tol"], f["max_replicas"]),
             hint="Metal (111) on MXene (0001), metal [1-10] along x. The gap is from the top MXene layer to the first "
                  "metal (111) plane; the shift slides the MXene over the metal. The metal is the substrate and keeps its lattice; the MXene takes the in-plane strain."),
     w.HBox([build_button, auto]),
-    section(4, "Relaxation", row(f["model"], f["head"]), f["dispersion"], row(f["fmax"], f["max_steps"]),
+    section(4, "Relaxation", row(f["model"], f["head"]), f["dispersion"], model_hint, row(f["fmax"], f["max_steps"]),
             row(f["fixed_layers"]), f["single_point"], ionic, f["relax_cell"], f["work_of_adhesion"], relax_button, relax_status, progress,
-            hint="MACE runs inside the Sim2L; a relaxation can take minutes. Runs with the same inputs come from the cache."),
+            hint="MACE or Allegro runs inside the Sim2L; a relaxation can take minutes. Runs with the same inputs come from the cache."),
 ], layout=w.Layout(flex="0 1 440px", min_width="360px", padding="0 1em 0 0"))
 
 # ---------- results ----------
@@ -224,8 +227,8 @@ def render():
         parts.append(table("Stacking, auto", ["", "Energy (eV/f.u.)", "Converged", "FIRE steps"], [
             [name[s] + (" · chosen" if s == a["chosen"] else ""), f"{a['per_formula_unit'][s]:.4f}", a["converged"][s],
              a["n_steps"][s]] for s in ("ABC", "ABA")],
-            f"Free-standing MXene (no metal), ionically relaxed at the spreadsheet a with {html.escape(a['model'])} "
-            f"({a['head']}{' + D3(BJ)' if a['dispersion'] else ''}); AβA − AβC = {a['delta_per_formula_unit']:.4f} eV/f.u."))
+            f"Free-standing MXene (no metal), ionically relaxed at the spreadsheet a with "
+            f"{html.escape(model_label(a))}; AβA − AβC = {a['delta_per_formula_unit']:.4f} eV/f.u."))
     r, c = o.get("relaxation"), o.get("comparison")
     if r and r.get("single_point"):                    # no relaxed structure, so no comparison
         parts.append(table("Single point", ["", ""], [
@@ -233,7 +236,7 @@ def render():
             ["fmax (eV/Å)", f"{r['fmax_final']:.4f}"],
             ["Gap (Å)", fmt(r["gap"])],
             ["Work of adhesion, rigid (J/m²)", fmt(r.get("work_of_adhesion"))],
-        ], "MACE energy of the built structure, no ionic relaxation."))
+        ], "Energy of the built structure, no ionic relaxation."))
     elif r:
         parts.append(table("Relaxation", ["", ""], [
             ["Converged", f"{r['converged']} after {r['n_steps']} FIRE steps, fmax {r['fmax_final']:.4f} eV/Å"],
@@ -311,15 +314,16 @@ class InputError(Exception):
 
 def run(relax, optimize=False):
     build_button.disabled = relax_button.disabled = optimize_button.disabled = True
+    state["running"] = True
     scan_view.value = ""
-    status.value = "" if relax else f"{SPIN}<i>Building{' (relaxing AβC and AβA of the free MXene with MACE)' if f['stacking'].value == 'auto' else ''}…</i>"
+    status.value = "" if relax else f"{SPIN}<i>Building{' (relaxing AβC and AβA of the free MXene with {model_label(collect_model())})' if f['stacking'].value == 'auto' else ''}…</i>"
     LOG.unlink(missing_ok=True)                            # written again if this run fails
     name, done = uuid.uuid4().hex, threading.Event()       # the run folder is RUNS/<name>, so it can be watched;
                                                            # absolute, as papermill changes directory into it
     watcher = threading.Thread(target=watch, args=(Path(get_experiment(), name, "progress.jsonl").resolve(), done, time.time()),
                                daemon=True)
     if relax:
-        relax_status.value = f"{SPIN}<i>Loading MACE {html.escape(f['model'].value)}…</i>"
+        relax_status.value = f"{SPIN}<i>Loading {html.escape(model_label(collect_model()))}…</i>"
         per = 1 if f["single_point"].value else f["max_steps"].value
         progress.max, progress.value, progress.layout.visibility = per * (6 if optimize else 1), 0, "visible"
         watcher.start()
@@ -389,7 +393,7 @@ def run(relax, optimize=False):
             verdict = ("single point" if rx.get("single_point") else "stopped" if rx["stopped"] else
                        "converged" if rx["converged"] else "not converged") + \
                       ("" if rx.get("single_point") else f" after {rx['n_steps']} steps")
-            relax_status.value = (f"{i['model']} ({i['head']}){' + D3(BJ)' if i['dispersion'] else ''}: {verdict}, "
+            relax_status.value = (f"{html.escape(model_label(i))}: {verdict}, "
                                   f"E = {rx['energy_final']:.4f} eV, fmax = {rx['fmax_final']:.4f} eV/Å"
                                   + (" (from the cache)" if r.cached else ""))
         render()
@@ -408,13 +412,52 @@ def run(relax, optimize=False):
     finally:
         done.set()
         progress.layout.visibility = "hidden"
-        build_button.disabled = relax_button.disabled = optimize_button.disabled = False
+        build_button.disabled, state["running"] = False, False
+        model_state()                                      # the relaxation buttons stay off where Allegro cannot run
 
 
 build_button.on_click(lambda _: run(False))
 
 
 MODES = [f["single_point"], ionic, f["relax_cell"]]     # exactly one checked, like radio buttons
+
+
+def model_label(p):
+    """"MACE mh-1 (omat_pbe) + D3(BJ)" or "Allegro (MXene PBE-D3)", from inputs or a result."""
+    if p["model"] == "allegro":
+        return "Allegro (MXene PBE-D3)"
+    return f"MACE {p['model']} ({p['head']})" + (" + D3(BJ)" if p["dispersion"] else "")
+
+
+def collect_model():
+    return {k: f[k].value for k in ("model", "head", "dispersion")}
+
+
+def model_state(*_):
+    """Allegro has D3 inside (checked, locked) and no heads, and knows 50 elements: for other systems (Ni3Si: no Si)
+    the relaxation buttons are off. Runs on every change of the model, MXene or metal."""
+    allegro = f["model"].value == "allegro"
+    f["head"].disabled = f["dispersion"].disabled = allegro
+    quiet["dispersion"] = True                         # setting it here is not a change to rebuild for
+    try:
+        f["dispersion"].value = allegro or state["d3"]
+    finally:
+        quiet["dispersion"] = False
+    f["dispersion"].description = "D3 dispersion (included in the Allegro model)" if allegro else \
+        "Add D3(BJ) dispersion (needs torch-dftd)"
+    elements = set(re.findall(r"[A-Z][a-z]?", f["mxene"].value + f["metal"].value))
+    missing = sorted(elements - ALLEGRO_ELEMENTS) if allegro and ALLEGRO_ELEMENTS is not None else []
+    relax_button.disabled = optimize_button.disabled = state.get("running", False) or bool(missing)
+    model_hint.value = "" if not allegro else "<small style='color:#666'>" + (
+        f"<span style='color:#b00020'>The Allegro model has no {', '.join(missing)}: choose MACE mh-1 for "
+        f"{f['mxene'].value} / {f['metal'].value}.</span>" if missing else
+        "Allegro energies are relative to per-element references: compare differences between structures with "
+        "MACE's, not totals.") + "</small>"
+
+
+def remember_d3(change):
+    if not quiet.get("dispersion") and f["model"].value != "allegro":
+        state["d3"] = change["new"]
 
 
 def exclusive(change):
@@ -436,10 +479,16 @@ optimize_button.on_click(lambda _: run(True, optimize=True))
 for name in ("mxene", "stacking", "mxene_rotation", "metal", "metal_layers", "metal_site", "metal_stacking",
              "gap", "shift_x", "shift_y", "tol", "max_replicas", "vacuum"):
     f[name].observe(lambda _, name=name: auto.value and not quiet.get(name) and run(False), names="value")
-for name in ("head", "dispersion"):                    # these change the build only through stacking = auto
-    f[name].observe(lambda _: auto.value and f["stacking"].value == "auto" and run(False), names="value")
+f["dispersion"].observe(remember_d3, names="value")
+for name in ("model", "mxene", "metal"):
+    f[name].observe(model_state, names="value")
+for name in ("model", "head", "dispersion"):           # these change the build only through stacking = auto
+    f[name].observe(lambda _, name=name: auto.value and not quiet.get(name) and f["stacking"].value == "auto"
+                    and run(False), names="value")
 for widget in (view, repeat, show, show_cell):
     widget.observe(draw, names="value")
+state["d3"] = f["dispersion"].value
+model_state()
 
 def app():
     """Builds the interface with the current inputs, then shows the form in place of the loading message."""

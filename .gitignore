@@ -10,3 +10,6 @@ bin/outputs.json
 .ipynb_checkpoints/
 bin/last_run.log
 .papermill_env
+
+# Allegro model handoff: unpublished, kept out of git (copied into the image)
+models/allegro/

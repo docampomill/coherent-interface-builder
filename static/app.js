@@ -8,7 +8,7 @@ const color = (e) => "#" + ($3Dmol.elementColors.Jmol[e] ?? 0x999999).toString(1
 const fmt = (v, d = 3) => (v === null || v === undefined ? "–" : Number(v).toFixed(d));
 const pct = (v) => `${v >= 0 ? "+" : "−"}${Math.abs(100 * v).toFixed(2)} %`;
 
-const state = { last: null, planes: null, plane: 0, result: null, relaxed: null, show: "built", auto: null };   // auto: last stacking = auto result   // result: last MACE job; relaxed: same, if it relaxed
+const state = { last: null, planes: null, plane: 0, result: null, relaxed: null, show: "built", auto: null, d3: false };   // d3: the user's D3 choice for MACE   // auto: last stacking = auto result   // result: last MACE job; relaxed: same, if it relaxed
 const RELAX_IDS = ["model", "head", "dispersion", "fmax", "max_steps", "fixed_layers", "relax_cell", "ionic_relaxation", "single_point", "work_of_adhesion"];
 // Relaxation modes, exactly one checked: a single point (the default), atoms only, or atoms + in-plane cell. The
 // backend has single_point and relax_cell; ionic relaxation is neither of them.
@@ -70,7 +70,7 @@ function collectInputs() {
     shift: [num("shift_x", 0), num("shift_y", 0)],
     tol: num("tol", d.tol),
     max_replicas: num("max_replicas", d.max_replicas),
-    model: $("model").value.trim() || d.model,
+    model: $("model").value || d.model,
     head: $("head").value,
     dispersion: $("dispersion").checked,
     fmax: num("fmax", d.fmax),
@@ -91,8 +91,11 @@ function applyInputs(given) {
   $("metal").value = p.metal;
   $("metal_site").value = p.metal_site;
   $("metal_stacking").value = p.metal_stacking;
+  if (![...$("model").options].some((o) => o.value === p.model)) $("model").append(h("option", { value: p.model }, p.model));   // another MACE model, from a file
   for (const k of ["vacuum", "metal_layers", "gap", "tol", "max_replicas", "model", "head", "fmax", "max_steps", "fixed_layers"]) $(k).value = p[k];
   for (const k of ["dispersion", "work_of_adhesion"]) $(k).checked = p[k];
+  if (p.model !== "allegro") state.d3 = Boolean(p.dispersion);
+  modelState();
   $("single_point").checked = Boolean(p.single_point);
   $("relax_cell").checked = Boolean(p.relax_cell) && !p.single_point;
   $("ionic_relaxation").checked = !p.relax_cell && !p.single_point;
@@ -105,7 +108,7 @@ function applyInputs(given) {
 const rebuild = debounce(async () => {
   const auto = radio("stacking") === "auto";
   $("stackingAuto").hidden = !auto;
-  if (auto) $("stackingAuto").textContent = "Relaxing AβC and AβA of the free MXene with MACE…";
+  if (auto) $("stackingAuto").textContent = `Relaxing AβC and AβA of the free MXene with ${modelLabel(collectInputs())}…`;
   try {
     state.last = await api("/api/build", { inputs: collectInputs() });
     showError("");
@@ -144,7 +147,7 @@ function renderStackingAuto(o) {
   const name = (s) => (s === "ABC" ? "AβC" : "AβA");
   const e = a.per_formula_unit;
   $("stackingAuto").textContent = `${name(a.chosen)} chosen. Free MXene, ionically relaxed: AβC ${fmt(e.ABC, 4)}, AβA ${fmt(e.ABA, 4)} eV per formula unit `
-    + `(AβA − AβC = ${fmt(a.delta_per_formula_unit, 4)} eV; ${a.model}, ${a.head}${a.dispersion ? " + D3(BJ)" : ""}).`;
+    + `(AβA − AβC = ${fmt(a.delta_per_formula_unit, 4)} eV; ${modelLabel(a)}).`;
 }
 
 // The viewer shows the built structure (with planes, if any), the relaxed one, the relaxed one over the
@@ -254,6 +257,27 @@ function hidePlanes() {
 
 /* ---------- relaxation ---------- */
 
+// "mh-1 (omat_pbe) + D3(BJ)" or "Allegro (MXene PBE-D3)", from inputs or a result that carries model, head, dispersion.
+function modelLabel(p) {
+  return p.model === "allegro" ? "Allegro (MXene PBE-D3)" : `MACE ${p.model} (${p.head})${p.dispersion ? " + D3(BJ)" : ""}`;
+}
+
+// Allegro has D3 inside (checked, locked) and no heads; it knows 50 elements, so for other systems (Ni3Si: no Si) the
+// MACE buttons are off. Also keeps them off while a job runs.
+function modelState() {
+  const allegro = $("model").value === "allegro";
+  $("dispersion").disabled = $("head").disabled = allegro;
+  $("dispersion").checked = allegro || state.d3;
+  $("dispersionLabel").textContent = allegro ? "D3 dispersion (included in the Allegro model)" : "Add D3(BJ) dispersion (needs torch-dftd)";
+  const known = new Set(OPTIONS.allegro_elements);
+  const missing = allegro ? [...new Set([...OPTIONS.elements[$("mxene").value], ...OPTIONS.elements[$("metal").value]])].filter((e) => !known.has(e)) : [];
+  $("relaxBtn").disabled = $("optimizeMetalBtn").disabled = Boolean(state.running) || missing.length > 0;
+  $("modelHint").hidden = !allegro;
+  $("modelHint").textContent = missing.length
+    ? `The Allegro model has no ${missing.join(", ")}: choose MACE mh-1 for ${$("mxene").value} / ${$("metal").value}.`
+    : "Allegro energies are relative to per-element references: compare differences between structures with MACE's, not totals.";
+}
+
 // The button says what the checked mode will do.
 function relaxLabel() {
   $("relaxBtn").textContent = $("single_point").checked ? "Compute energy" : "Relax";
@@ -281,9 +305,10 @@ async function startRelax(optimize = false) {
     showError(err.message);
     return;
   }
-  $("relaxBtn").disabled = $("optimizeMetalBtn").disabled = true;
+  state.running = true;
+  modelState();
   $("stopBtn").hidden = false;
-  $("relaxStatus").textContent = `Loading MACE ${collectInputs().model}…`;
+  $("relaxStatus").textContent = `Loading ${modelLabel(collectInputs())}…`;
   let seen = 0;
   while (true) {
     await new Promise((r) => setTimeout(r, 1000));
@@ -293,7 +318,8 @@ async function startRelax(optimize = false) {
     if (last) $("relaxStatus").textContent = (last.candidate ? `Placement ${last.candidate}/${last.of}: ${last.metal_site}, ${last.metal_stacking} · ` : "")
       + `Step ${last.step} · E = ${fmt(last.energy, 4)} eV · fmax = ${fmt(last.fmax, 4)} eV/Å`;
     if (job.state === "running") continue;
-    $("relaxBtn").disabled = $("optimizeMetalBtn").disabled = false;
+    state.running = false;
+    modelState();
     $("stopBtn").hidden = true;
     if (job.state === "error") { showError(job.error); $("relaxStatus").textContent = ""; return; }
     state.result = job.result;
@@ -330,7 +356,7 @@ function renderMetalScan(scan) {
 
 function renderRelaxation(o) {
   const r = o.relaxation;
-  const model = `${o.inputs.model} (${o.inputs.head})${o.inputs.dispersion ? " + D3(BJ)" : ""}`;
+  const model = modelLabel(o.inputs);
   if (r.single_point) {
     const rows = [
       ["Status", "single point", "built structure, no ionic relaxation"],
@@ -540,11 +566,12 @@ $("form").addEventListener("input", (ev) => {
   const t = ev.target;
   if (["ph", "pk", "pl", "load"].includes(t.id) || t.name === "plane") return;
   if (t.name === "plane_part") { if (state.planes) { state.plane = 0; loadPlanes(); } return; }
+  if (t.id === "dispersion") state.d3 = t.checked;   // only editable for MACE
+  modelState();
   clearRelaxed();
-  // The MACE settings change the build only through stacking = auto (the model name once it is committed, below).
-  if (!RELAX_IDS.includes(t.id) || (["head", "dispersion"].includes(t.id) && radio("stacking") === "auto")) rebuild();
+  // The model settings change the build only through stacking = auto.
+  if (!RELAX_IDS.includes(t.id) || (["model", "head", "dispersion"].includes(t.id) && radio("stacking") === "auto")) rebuild();
 });
-$("model").addEventListener("change", () => { if (radio("stacking") === "auto") rebuild(); });
 
 document.querySelectorAll("[data-view]").forEach((b) =>
   b.addEventListener("click", () => { press("view", b.dataset.view); Viewer.orient(b.dataset.view); }));

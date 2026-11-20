@@ -1,0 +1,6 @@
+# Allegro (nequip), installed in its own venv /opt/allegro (see Containerfile): nequip needs e3nn 0.6, and MACE's
+# mh-1 model unpickles only with e3nn 0.4.4, so the two cannot share one environment. relax.py runs Allegro through
+# allegro_worker.py in that venv.
+nequip==0.17.0
+nequip-allegro==0.8.2
+e3nn==0.6.0

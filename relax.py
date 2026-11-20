@@ -1,9 +1,13 @@
-"""MACE relaxation of the interface built by builder.py.
+"""MACE or Allegro relaxation of the interface built by builder.py (model = "allegro" selects Allegro).
 
     python relax.py [inputs.json]      writes POSCAR, POSCAR_relaxed, POSCAR_<mxene>, POSCAR_<metal> and outputs.json
 """
+import atexit
 import functools
+import hashlib
 import json
+import os
+import subprocess
 import sys
 import threading
 from importlib import metadata
@@ -11,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 from ase import Atoms
+from ase.calculators.calculator import Calculator, all_changes
 from ase.calculators.mixing import SumCalculator
 from ase.constraints import FixAtoms
 from ase.filters import FrechetCellFilter
@@ -20,9 +25,9 @@ from pymatgen.core import Structure
 import builder
 
 DEFAULTS = dict(
-    model="mh-1",              # MACE foundation model
-    head="omat_pbe",           # output head of the MH models
-    dispersion=False,          # add D3(BJ)
+    model="mh-1",              # MACE foundation model, or "allegro" for the Allegro MXene potential
+    head="omat_pbe",           # output head of the MH models (not used by Allegro)
+    dispersion=False,          # add D3(BJ) (Allegro: always on, D3 is part of the model)
     fmax=0.01,                 # eV/Å
     max_steps=500,             # FIRE steps
     fixed_layers=2,            # outermost metal layers held fixed
@@ -32,6 +37,12 @@ DEFAULTS = dict(
     optimize_metal=False,      # run every metal_site (A, B, C) × metal_stacking (ABC, ACB) and keep the lowest energy
 )
 HEADS = {"omat_pbe": "PBE(+U)", "oc20_usemppbe": "PBE slabs", "matpes_r2scan": "r²SCAN"}
+MODELS = {"mh-1": "MACE mh-1", "allegro": "Allegro · MXene PBE-D3"}     # the interfaces' choices; the CLI takes any MACE name
+HERE = Path(__file__).resolve().parent
+ALLEGRO_MODEL = Path(os.environ.get("ALLEGRO_MODEL", HERE / "models" / "allegro" / "deployed_model.nequip.zip"))
+ALLEGRO_PYTHON = os.environ.get("ALLEGRO_PYTHON", "/opt/allegro/bin/python")   # the venv with nequip (see Containerfile)
+ALLEGRO_REFERENCES = ALLEGRO_MODEL.parent / "energy_references.json"   # belongs to the model: its 50 elements
+ALLEGRO_ELEMENTS = set(json.loads(ALLEGRO_REFERENCES.read_text())["mu_eV_per_atom"]) if ALLEGRO_REFERENCES.exists() else set()
 MH_URLS = {name: f"https://github.com/ACEsuit/mace-foundations/releases/download/mace_mh_1/mace-{name}.model"
            for name in ("mh-0", "mh-1")}                # for mace-torch versions that do not know the MH names
 IN_PLANE = [True, True, False, False, False, True]     # FrechetCellFilter mask: a, b, γ relax; c fixed
@@ -41,9 +52,65 @@ AUTO_VACUUM, AUTO_FMAX, AUTO_STEPS = 20.0, 0.01, 500   # free MXene of stacking_
 auto_lock = threading.Lock()                           # one calculator, shared by the web app's threads
 
 
-@functools.lru_cache(maxsize=2)
+class AllegroCalculator(Calculator):
+    """The Allegro model, run by allegro_worker.py in the Python that has nequip (ALLEGRO_PYTHON). Energies are
+    relative to the model's per-element references (its energy_references.json): differences between structures with
+    the same atoms are comparable with MACE's, totals are not."""
+    implemented_properties = ["energy", "free_energy", "forces", "stress"]
+
+    def __init__(self, model=ALLEGRO_MODEL, python=ALLEGRO_PYTHON):
+        super().__init__()
+        if not Path(model).exists():
+            raise ValueError(f"Allegro model {model} not found: put the handoff in models/allegro/ or set ALLEGRO_MODEL")
+        if not Path(python).exists():
+            python = sys.executable                    # nequip installed next to this Python, if anywhere
+        self.lock = threading.Lock()                   # one request at a time on the pipe
+        self.process = subprocess.Popen([python, str(HERE / "allegro_worker.py"), str(model)], stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        atexit.register(self.process.kill)
+        ready = self.receive()
+        self.versions = ready["versions"]
+        self.md5 = hashlib.md5(Path(model).read_bytes()).hexdigest()
+
+    def receive(self):
+        line = self.process.stdout.readline()
+        if not line:
+            raise RuntimeError("the Allegro worker stopped (is nequip installed in ALLEGRO_PYTHON?)")
+        reply = json.loads(line)
+        if "error" in reply:
+            raise RuntimeError(f"Allegro worker: {reply['error'].strip().splitlines()[-1]}")
+        return reply
+
+    def calculate(self, atoms=None, properties=("energy",), system_changes=all_changes):
+        super().calculate(atoms, properties, system_changes)
+        request = dict(numbers=self.atoms.numbers.tolist(), positions=self.atoms.positions.tolist(),
+                       cell=np.asarray(self.atoms.cell).tolist(), pbc=self.atoms.pbc.tolist())
+        with self.lock:
+            self.process.stdin.write(json.dumps(request) + "\n")
+            reply = self.receive()
+        self.results = dict(energy=reply["energy"], free_energy=reply["energy"], forces=np.array(reply["forces"]))
+        if "stress" in reply:
+            self.results["stress"] = np.array(reply["stress"])
+
+
+def settings(model, head, dispersion):
+    """(model, head, dispersion) as calculated: Allegro has no heads and its D3 is part of the model."""
+    return (model, None, True) if model == "allegro" else (model, head, bool(dispersion))
+
+
+def check_elements(model, symbols):
+    """ValueError if the potential does not know an element (Allegro: the 50 of its energy references)."""
+    missing = sorted(set(symbols) - ALLEGRO_ELEMENTS) if model == "allegro" and ALLEGRO_ELEMENTS else []
+    if missing:
+        raise ValueError(f"The Allegro model has no {', '.join(missing)}; choose MACE for this system")
+
+
+@functools.lru_cache(maxsize=3)
 def calculator(model, head, dispersion):
-    """MACE in float64. D3(BJ) is added here, not through mace_mp, which would pass `head` to D3 too."""
+    """MACE in float64. D3(BJ) is added here, not through mace_mp, which would pass `head` to D3 too.
+    model = "allegro": the Allegro model (float32, its own D3)."""
+    if model == "allegro":
+        return AllegroCalculator()
     from mace.calculators import mace_mp
     from mace.calculators.foundations_models import mace_mp_names
     source = MH_URLS[model] if model in MH_URLS and model not in mace_mp_names else model   # mace-torch < 0.3.16
@@ -58,11 +125,16 @@ def calculator(model, head, dispersion):
     return SumCalculator([calc, d3])
 
 
-@functools.lru_cache(maxsize=64)
 def stacking_energies(mxene, model, head, dispersion):
-    """MACE energies of the free-standing MXene (no metal) in AβC and AβA: each ionically relaxed (FIRE, fixed cell
-    at the spreadsheet a, 20 Å vacuum) in its a × √3a cell. Both cells hold the same atoms, so the energies compare
-    directly; the lower one is "chosen". Used by builder.build for stacking = auto."""
+    """MACE (or Allegro) energies of the free-standing MXene (no metal) in AβC and AβA: each ionically relaxed (FIRE,
+    fixed cell at the spreadsheet a, 20 Å vacuum) in its a × √3a cell. Both cells hold the same atoms, so the energies
+    compare directly; the lower one is "chosen". Used by builder.build for stacking = auto. Cached per settings."""
+    check_elements(model, builder.mxene_layers(builder.MXENES[mxene]["formula"]))
+    return _stacking_energies(mxene, *settings(model, head, dispersion))
+
+
+@functools.lru_cache(maxsize=64)
+def _stacking_energies(mxene, model, head, dispersion):
     with auto_lock:
         calc = calculator(model, head, dispersion)
         energies, converged, n_steps = {}, {}, {}
@@ -99,8 +171,10 @@ def relax(inputs, progress=None, should_stop=None):
         return optimize_metal(inputs, progress, should_stop)
     if p["single_point"]:
         p["relax_cell"] = False                        # the two are exclusive: single point wins
-    structure, outputs = builder.build(inputs)
+    p["model"], p["head"], p["dispersion"] = settings(p["model"], p["head"], p["dispersion"])
+    structure, outputs = builder.build({**inputs, **{k: p[k] for k in ("model", "head", "dispersion")}})
     outputs["inputs"].update({k: p[k] for k in DEFAULTS})
+    check_elements(p["model"], structure.symbol_set)
 
     layers = np.array(structure.site_properties["layer"])
     n_mx = len(outputs["mxene"]["layers"])
@@ -140,6 +214,11 @@ def relax(inputs, progress=None, should_stop=None):
                   fmax_final=trace[-1]["fmax"], cell=dict(a=round(float(a), 4), b=round(float(b), 4), gamma=round(float(gamma), 3)),
                   gap=round(float(z[layers == n_mx].mean() - z[layers == n_mx - 1].mean()), 4),
                   versions={pkg: version(pkg) for pkg in ("mace-torch", "torch", "torch-dftd", "ase")}, trace=trace)
+    if isinstance(atoms.calc, AllegroCalculator):     # its own environment and model file
+        result.update(versions={**result["versions"], **{f"allegro {k}": v for k, v in atoms.calc.versions.items()}},
+                      model_file=dict(name=ALLEGRO_MODEL.name, md5=atoms.calc.md5),
+                      energy_zero="per-element references of the model (energy_references.json); "
+                                  "only differences between structures with the same atoms compare with MACE")
 
     if p["work_of_adhesion"] and not stopped:
         metal = layers >= n_mx
